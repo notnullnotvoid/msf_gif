@@ -44,7 +44,7 @@ true-color???
 TODO:
 ! change to 15 bit meta-meta-palette
 ! early-out of palette selection loop
-- switch to using 4-byte ints for palette selection/quantization
+! switch to using 4-byte ints for palette selection/quantization
 - switch to using bitfields for storing palette data
 - add optional dithering
 

@@ -76,7 +76,7 @@ struct MetaPaletteInfo {
     bool * used;
 };
 
-MetaPaletteInfo choose_meta_palette(List<u16 *> cookedFrames, int width, int height) {
+MetaPaletteInfo choose_meta_palette(List<u32 *> cookedFrames, int width, int height) {
     bool * used = (bool *) malloc(32768 * (cookedFrames.len - 1) * sizeof(bool));
     // int cvtMasks[6] = { 0xFFF, 0xEFF, 0xEFE, 0xEEE, 0xCEE, 0xCEC }; //favor green > red > blue
     // int cvtMasks[6] = { 0xFFF, 0xEFF, 0xEEF, 0xEEE, 0xCEE, 0xCCE }; //favor red > green > blue
@@ -85,7 +85,7 @@ MetaPaletteInfo choose_meta_palette(List<u16 *> cookedFrames, int width, int hei
                         0b0111001110011100, 0b0110001110011100, 0b0110001110011000, };
     int minPalette = 0;
     for (int i : range(1, cookedFrames.len)) {
-        u16 * frame = cookedFrames[i];
+        u32 * frame = cookedFrames[i];
         bool * used1 = used + (i - 1) * 32768;
 
         //mark down which colors are used out of the full 12-bit palette
@@ -121,11 +121,11 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     float preCook, preAmble, preTotal;
     preCook = preAmble = preTotal = get_time();
     //cook frames (downsample to 15-bit color)
-    List<u16 *> cookedFrames = create_list<u16 *>(rawFrames.len);
-    cookedFrames.add((u16 *) malloc(width * height * sizeof(u16))); //dummy frame for diff base
-    memset(cookedFrames[0], 0, width * height * sizeof(u16)); //set dummy frame to background color
+    List<u32 *> cookedFrames = create_list<u32 *>(rawFrames.len);
+    cookedFrames.add((u32 *) malloc(width * height * sizeof(u32))); //dummy frame for diff base
+    memset(cookedFrames[0], 0, width * height * sizeof(u32)); //set dummy frame to background color
     for (RawFrame frame : rawFrames) {
-        u16 * data = (u16 *) malloc(width * height * sizeof(u16));
+        u32 * data = (u32 *) malloc(width * height * sizeof(u32));
         for (int y : range(height)) {
             for (int x : range(width)) {
                 Pixel p = frame.pixels[y * frame.pitch + x];
@@ -179,7 +179,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     timers.choice = get_time() - preChoice;
     float preMask = get_time();
     if (meta.cvtMask != 0x7FFF) {
-        for (u16 * frame : cookedFrames) {
+        for (u32 * frame : cookedFrames) {
             for (int i : range(width * height)) {
                 frame[i] &= meta.cvtMask;
             }
@@ -228,8 +228,8 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     uint largestIdxBuffer = 0; //DEBUG
 
     for (int j : range(1, cookedFrames.len)) {
-        u16 * pframe = cookedFrames[j - 1];
-        u16 * cframe = cookedFrames[j];
+        u32 * pframe = cookedFrames[j - 1];
+        u32 * cframe = cookedFrames[j];
         // printf("\n\n\n\nnew frame\n\n\n\n");
 
         float prePalette = get_time();
@@ -366,7 +366,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     buf.finalize();
     free(lzw.data);
     idxBuffer.finalize();
-    for (u16 * frame : cookedFrames)
+    for (u32 * frame : cookedFrames)
         free(frame);
     cookedFrames.finalize();
     free(meta.used);
