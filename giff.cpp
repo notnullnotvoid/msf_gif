@@ -73,7 +73,6 @@ void reset(StridedList * lzw, int tableSize, int stride) {
 
 struct MetaPaletteInfo {
     int cvtMask;
-    int maxUsed;
     bool * used;
 };
 
@@ -84,7 +83,6 @@ MetaPaletteInfo choose_meta_palette(List<u16 *> cookedFrames, int width, int hei
     int cvtMasks[9] = { 0b0111111111111111, 0b0111101111111111, 0b0111101111111110,
                         0b0111101111011110, 0b0111001111011110, 0b0111001111011100,
                         0b0111001110011100, 0b0110001110011100, 0b0110001110011000, };
-    int maxUsed[9] = {};
     int minPalette = 0;
     for (int i : range(1, cookedFrames.len)) {
         u16 * frame = cookedFrames[i];
@@ -107,15 +105,14 @@ MetaPaletteInfo choose_meta_palette(List<u16 *> cookedFrames, int width, int hei
                     ++count;
 
             printf("used %3d colors out of %4d      ", count, 1 << (15 - m));
-            if (count > 255)
-                ++minPalette;
-            maxUsed[m] = max(maxUsed[m], count);
-
+            if (count < 256)
+                break;
+            ++minPalette;
         }
         printf("\n");
     }
 
-    return { cvtMasks[minPalette], maxUsed[minPalette], used };
+    return { cvtMasks[minPalette], used };
 }
 
 DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds, const char * path) {
@@ -123,7 +120,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
     float preCook, preAmble, preTotal;
     preCook = preAmble = preTotal = get_time();
-    //cook frames (downsample to 12-bit color)
+    //cook frames (downsample to 15-bit color)
     List<u16 *> cookedFrames = create_list<u16 *>(rawFrames.len);
     cookedFrames.add((u16 *) malloc(width * height * sizeof(u16))); //dummy frame for diff base
     memset(cookedFrames[0], 0, width * height * sizeof(u16)); //set dummy frame to background color
@@ -179,7 +176,6 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     float preChoice = get_time();
     MetaPaletteInfo meta = choose_meta_palette(cookedFrames, width, height);
     printf("conversion mask: %X\n", meta.cvtMask);
-    printf("stride value: %d\n", meta.maxUsed);
     timers.choice = get_time() - preChoice;
     float preMask = get_time();
     if (meta.cvtMask != 0x7FFF) {
@@ -226,7 +222,8 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     buf.write_unsafe<u16>(0); //loop forever
     buf.write_unsafe<u8>(0); //block terminator
 
-    StridedList lzw = { (i16 *) malloc(4096 * (meta.maxUsed + 1) * sizeof(i16)) };
+    // StridedList lzw = { (i16 *) malloc(4096 * (meta.maxUsed + 1) * sizeof(i16)) };
+    StridedList lzw = { (i16 *) malloc(4096 * 256 * sizeof(i16)) };
     List<u8> idxBuffer = create_list<u8>(200);
     uint largestIdxBuffer = 0; //DEBUG
 
@@ -250,6 +247,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
                     // (u8)((i & 0x00F) << 4 | (i & 0x00F)     ),
                     // (u8)((i & 0x0F0)      | (i & 0x0F0) >> 4),
                     // (u8)((i & 0xF00) >> 4 | (i & 0xF00) >> 8),
+                    //TODO: make the second shift amount depend on the bit depth of the channel?
                     (u8)((i & 0x001F) << 3 | (i & 0x001f) >>  2),
                     (u8)((i & 0x03E0) >> 2 | (i & 0x03E0) >>  7),
                     (u8)((i & 0x7C00) >> 7 | (i & 0x7C00) >> 12),

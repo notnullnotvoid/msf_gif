@@ -25,13 +25,14 @@ int main() {
 	printf("let's export some fuckin' gifs!\n");
 
 	//TODO: generate this list dynamically?
-	auto names = { "bouncy", "diwide", "diwide-large", "keyhole", "tiles" };
+	auto names = { "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "sky", "tiles" };
 
 	List<RawBlob *> blobs = {};
 
 	for (const char * name : names) {
 		char * path = cat("in/", cat(name, ".rawframes"));
 		printf("loading %s...\n", path);
+		fflush(stdout);
 		blobs.add((RawBlob *) read_entire_file(path));
 	}
 
@@ -50,8 +51,6 @@ int main() {
 		printf("\nwriting %s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
 			path, blob->width, blob->height, blob->frames, blob->centiSeconds);
 		timers.add(save_gif(blob->width, blob->height, frames, blob->centiSeconds, path));
-		// printf("cook: %6.4f   choice: %6.4f   mask: %6.4f   amble: %6.4f   palette: %6.4f   inner: %6.4f   compress: %6.4f   total: %6.4f\n",
-		// 	timers.cook, timers.choice, timers.mask, timers.amble, timers.palette, timers.inner, timers.compress, timers.total);
 		printf("\n");
 		fflush(stdout);
 	}
