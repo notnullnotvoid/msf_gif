@@ -24,6 +24,7 @@ int main() {
 
 	printf("let's export some fuckin' gifs!\n");
 
+	//TODO: generate this list dynamically?
 	auto names = { "bouncy", "diwide", "diwide-large", "keyhole", "tiles" };
 
 	List<RawBlob *> blobs = {};

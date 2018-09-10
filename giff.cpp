@@ -78,38 +78,41 @@ struct MetaPaletteInfo {
 };
 
 MetaPaletteInfo choose_meta_palette(List<u16 *> cookedFrames, int width, int height) {
-    bool * used = (bool *) malloc(4096 * (cookedFrames.len - 1) * sizeof(bool));
+    bool * used = (bool *) malloc(32768 * (cookedFrames.len - 1) * sizeof(bool));
     // int cvtMasks[6] = { 0xFFF, 0xEFF, 0xEFE, 0xEEE, 0xCEE, 0xCEC }; //favor green > red > blue
-    int cvtMasks[6] = { 0xFFF, 0xEFF, 0xEEF, 0xEEE, 0xCEE, 0xCCE }; //favor red > green > blue
-    int maxUsed[6] = {};
+    // int cvtMasks[6] = { 0xFFF, 0xEFF, 0xEEF, 0xEEE, 0xCEE, 0xCCE }; //favor red > green > blue
+    int cvtMasks[9] = { 0b0111111111111111, 0b0111101111111111, 0b0111101111111110,
+                        0b0111101111011110, 0b0111001111011110, 0b0111001111011100,
+                        0b0111001110011100, 0b0110001110011100, 0b0110001110011000, };
+    int maxUsed[9] = {};
     int minPalette = 0;
     for (int i : range(1, cookedFrames.len)) {
         u16 * frame = cookedFrames[i];
-        bool * used1 = used + (i - 1) * 4096;
+        bool * used1 = used + (i - 1) * 32768;
 
         //mark down which colors are used out of the full 12-bit palette
-        memset(used1, 0, 4096 * sizeof(bool));
+        memset(used1, 0, 32768 * sizeof(bool));
         for (int i : range(width * height))
             used1[frame[i]] = true;
 
         //count how many fall into each meta-palette
-        for (int m : range(minPalette, 6)) {
-            bool used2[4096] = {};
-            for (int i : range(4096))
+        for (int m : range(minPalette, 9)) {
+            bool used2[32768] = {};
+            for (int i : range(32768))
                 used2[i & cvtMasks[m]] |= used1[i];
 
             int count = 0;
-            for (int i : range(4096))
+            for (int i : range(32768))
                 if (used2[i])
                     ++count;
 
-            // printf("used %3d colors out of %4d\t\t", count, 1 << (12 - m));
+            printf("used %3d colors out of %4d      ", count, 1 << (15 - m));
             if (count > 255)
                 ++minPalette;
-            // maxUsed[m] = imax(maxUsed[m], count);
             maxUsed[m] = max(maxUsed[m], count);
+
         }
-        // printf("\n");
+        printf("\n");
     }
 
     return { cvtMasks[minPalette], maxUsed[minPalette], used };
@@ -129,7 +132,8 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
         for (int y : range(height)) {
             for (int x : range(width)) {
                 Pixel p = frame.pixels[y * frame.pitch + x];
-                data[y * width + x] = (p.b & 0xF0) << 4 | (p.g & 0xF0) | (p.r & 0xF0) >> 4;
+                // data[y * width + x] = (p.b & 0xF0) << 4 | (p.g & 0xF0) | (p.r & 0xF0) >> 4;
+                data[y * width + x] = (p.b & 0xF8) << 7 | (p.g & 0xF8) << 2 | (p.r & 0xF8) >> 3;
             }
 
             // Pixel * row = &frame.pixels[y * frame.pitch];
@@ -178,7 +182,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     printf("stride value: %d\n", meta.maxUsed);
     timers.choice = get_time() - preChoice;
     float preMask = get_time();
-    if (meta.cvtMask != 0xFFF) {
+    if (meta.cvtMask != 0x7FFF) {
         for (u16 * frame : cookedFrames) {
             for (int i : range(width * height)) {
                 frame[i] &= meta.cvtMask;
@@ -233,19 +237,22 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
         float prePalette = get_time();
         //generate palette
-        u8 tlb[4096] = {};
+        u8 tlb[32768] = {};
         struct Color3 { u8 r, g, b; };
         Color3 table[256] = {};
         int tableIdx = 1; //we start counting at 1 because 0 is the transparent color
-        bool * used = meta.used + (j - 1) * 4096;
-        for (int i : range(4096)) {
+        bool * used = meta.used + (j - 1) * 32768;
+        for (int i : range(32768)) {
             int newIdx = i & meta.cvtMask;
             if (!tlb[newIdx] && used[i]) {
                 tlb[newIdx] = tableIdx;
                 table[tableIdx] = {
-                    (u8)((i & 0x00F) << 4 | (i & 0x00F)     ),
-                    (u8)((i & 0x0F0)      | (i & 0x0F0) >> 4),
-                    (u8)((i & 0xF00) >> 4 | (i & 0xF00) >> 8),
+                    // (u8)((i & 0x00F) << 4 | (i & 0x00F)     ),
+                    // (u8)((i & 0x0F0)      | (i & 0x0F0) >> 4),
+                    // (u8)((i & 0xF00) >> 4 | (i & 0xF00) >> 8),
+                    (u8)((i & 0x001F) << 3 | (i & 0x001f) >>  2),
+                    (u8)((i & 0x03E0) >> 2 | (i & 0x03E0) >>  7),
+                    (u8)((i & 0x7C00) >> 7 | (i & 0x7C00) >> 12),
                 };
                 ++tableIdx;
             }

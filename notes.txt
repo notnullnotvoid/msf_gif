@@ -19,6 +19,7 @@ allow "immediate mode" (frame-by-frame) export
 			or just make it so damn fast that it doesn't matter :^)
 
 allow user to specify channel importance (RGB, RBG, GRB, GBR, BRG, BGR)
+	maybe even allow them to provide their own palette chain????? would that be too much? probably...
 allow user to provide their own malloc, realloc, free equivalents?
 allow user to explicitly enable/disable SIMD paths
 maybe allow different input formats (RGBA, BGRA, RGB, etc.)???
@@ -37,3 +38,18 @@ dithering???
 			and yes, SIMD would help immensely. just don't downconvert to 16-bit ints, or find a better way to do that
 true-color???
 	bitfield for color tracker?
+
+
+
+TODO:
+! change to 15 bit meta-meta-palette
+- early-out of palette selection loop
+- switch to using 4-byte ints for palette selection/quantization
+- switch to using bitfields for storing palette data
+- add optional dithering
+
+- SSE optimization
+- AVX optimization
+- multithreading
+
+- add test cases where width/height are not a multiple of 8
