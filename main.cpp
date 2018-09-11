@@ -50,7 +50,7 @@ int main() {
 		char * path = cat("out/", cat(names.begin()[i], ".gif"));
 		printf("\nwriting %s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
 			path, blob->width, blob->height, blob->frames, blob->centiSeconds);
-		timers.add(save_gif(blob->width, blob->height, frames, blob->centiSeconds, path));
+		timers.add(save_gif(blob->width, blob->height, frames, blob->centiSeconds, path, true));
 		printf("\n");
 		fflush(stdout);
 	}
@@ -71,7 +71,9 @@ int main() {
 	}
 	printf("\n%12s      cook: %6.4f   choice: %6.4f   mask: %6.4f   amble: %6.4f   palette: %6.4f   inner: %6.4f   compress: %6.4f   write: %6.4f   total: %6.4f\n",
 		"totals", totals.cook, totals.choice, totals.mask, totals.amble, totals.palette, totals.inner, totals.compress, totals.write, totals.total);
-	printf("lost time:   %6.4f\n", totals.total - (totals.amble + totals.compress + totals.write));
+	printf("lost time:   %6.4f\n\n", totals.total - (totals.amble + totals.compress + totals.write));
+
+	//TODO: track input and output sizes and encode speed for each GIF and for all of them together
 
 	return 0;
 }

@@ -18,7 +18,7 @@ struct DebugTimers {
 	float cook, choice, mask, amble, palette, inner, compress, write, total;
 };
 
-DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds, const char * path);
+DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds, const char * path, bool dither);
 void save_raw_frames(int width, int height, List<RawFrame> rawFrames, int centiSeconds);
 
 #endif

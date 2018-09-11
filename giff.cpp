@@ -88,7 +88,7 @@ MetaPaletteInfo choose_meta_palette(List<u32 *> cookedFrames, int width, int hei
         u32 * frame = cookedFrames[i];
         bool * used1 = used + (i - 1) * 32768;
 
-        //mark down which colors are used out of the full 12-bit palette
+        //mark down which colors are used out of the full 15-bit palette
         memset(used1, 0, 32768 * sizeof(bool));
         for (int i : range(width * height))
             used1[frame[i]] = true;
@@ -102,71 +102,136 @@ MetaPaletteInfo choose_meta_palette(List<u32 *> cookedFrames, int width, int hei
             int count = 0;
             for (int i : range(32768))
                 if (used2[i])
-                    ++count;
+                    ++count; //XXX: should we break early here (if count > 255) for performance?
 
-            printf("used %3d colors out of %4d      ", count, 1 << (15 - m));
+            // printf("used %3d colors out of %4d      ", count, 1 << (15 - m));
             if (count < 256)
                 break;
             ++minPalette;
         }
-        printf("\n");
+        // printf("\n");
     }
 
     return { cvtMasks[minPalette], used };
 }
 
-DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds, const char * path) {
+void cook_frame(RawFrame raw, u32 * cooked, int width, int height) {
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            Pixel p = raw.pixels[y * raw.pitch + x];
+            cooked[y * width + x] = (p.b & 0xF8) << 7 | (p.g & 0xF8) << 2 | (p.r & 0xF8) >> 3;
+        }
+    }
+}
+
+int shift_amt(int mask) {
+    if (mask == 0x1F) return 3;
+    if (mask == 0x1E) return 2;
+    if (mask == 0x1C) return 1;
+    return 0;
+}
+
+void cook_frame_dithered(RawFrame raw, u32 * cooked, int width, int height, int cvtMask) {
+    int rmask = 0x001F & cvtMask;
+    int gmask = (0x03E0 & cvtMask) >> 5;
+    int bmask = (0x7C00 & cvtMask) >> 10;
+    int rshift = shift_amt(rmask);
+    int gshift = shift_amt(gmask);
+    int bshift = shift_amt(bmask);
+
+    int ditherKernel[8 * 8] = {
+         0, 48, 12, 60,  3, 51, 15, 63,
+        32, 16, 44, 28, 35, 19, 47, 31,
+         8, 56,  4, 52, 11, 59,  7, 55,
+        40, 24, 36, 20, 43, 27, 39, 23,
+         2, 50, 14, 62,  1, 49, 13, 61,
+        34, 18, 46, 30, 33, 17, 45, 29,
+        10, 58,  6, 54,  9, 57,  5, 53,
+        42, 26, 38, 22, 41, 25, 37, 21,
+    };
+
+    // int derivedKernel[8 * 8];
+    // for (int i = 0; i < 8 * 8; ++i) {
+    //     int k = ditherKernel[i];
+    //     derivedKernel[i] = k >> rshift & k >> gshift << 8 & k >> bshift << 16;
+    // }
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            Pixel p = raw.pixels[y * raw.pitch + x];
+            int dx = x % 8, dy = y % 8;
+            int k = ditherKernel[dy * 8 + dx];
+            cooked[y * width + x] = ((min(255, p.b + (k >> rshift)) & 0xF8) << 7 |
+                                     (min(255, p.g + (k >> gshift)) & 0xF8) << 2 |
+                                     (min(255, p.r + (k >> bshift)) & 0xF8) >> 3) & cvtMask;
+        }
+    }
+}
+
+MetaPaletteInfo choose_meta_palette_dithered(
+        List<RawFrame> rawFrames, List<u32 *> cookedFrames, int width, int height)
+{
+    bool * used = (bool *) malloc(32768 * (cookedFrames.len - 1) * sizeof(bool));
+    int cvtMasks[9] = { 0b0111111111111111, 0b0111101111111111, 0b0111101111111110,
+                        0b0111101111011110, 0b0111001111011110, 0b0111001111011100,
+                        0b0111001110011100, 0b0110001110011100, 0b0110001110011000, };
+    //NOTE: it's possible (if unlikely) for a reduction in bit depth to result in an increase in
+    //      colors used for a given frame when dithering is applied, so we treat the list of frames
+    //      like a ring buffer, circling around until all frames are cooked with the same bit depth
+    int minPalette = 0;
+    int minCorrect = 0;
+    // for (int idx = 0; idx < minCorrect + cookedFrames.len; ++idx) {
+    int idx = 0;
+    while (idx < minCorrect + (int) cookedFrames.len - 1) {
+        int i = idx % (cookedFrames.len - 1) + 1;
+        u32 * frame = cookedFrames[i];
+        bool * used1 = used + (i - 1) * 32768;
+
+        cook_frame_dithered(rawFrames[i - 1], frame, width, height, cvtMasks[minPalette]);
+        //mark down which colors are used out of the full 15-bit palette
+        memset(used1, 0, 32768 * sizeof(bool));
+        for (int j = 0; j < width * height; ++j)
+            used1[frame[j]] = true;
+
+        //count how many fall into the meta-palette
+        int count = 0;
+        for (int j = 0; j < 32768; ++j)
+            if (used1[j])
+                ++count; //XXX: should we break early here (if count > 255) for performance?
+        // printf("frame %3d: %4d colors used out of %5d      ", i, count, 1 << (15 - minPalette));
+
+        if (count < 256) {
+            ++idx;
+            // printf("\n");
+            // fflush(stdout);
+        } else {
+            ++minPalette;
+            minCorrect = idx;
+        }
+    }
+
+    return { cvtMasks[minPalette], used };
+}
+
+DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames,
+                     int centiSeconds, const char * path, bool dither) {
     DebugTimers timers = {};
 
     float preCook, preAmble, preTotal;
     preCook = preAmble = preTotal = get_time();
-    //cook frames (downsample to 15-bit color)
-    List<u32 *> cookedFrames = create_list<u32 *>(rawFrames.len);
-    cookedFrames.add((u32 *) malloc(width * height * sizeof(u32))); //dummy frame for diff base
-    memset(cookedFrames[0], 0, width * height * sizeof(u32)); //set dummy frame to background color
-    for (RawFrame frame : rawFrames) {
-        u32 * data = (u32 *) malloc(width * height * sizeof(u32));
-        for (int y : range(height)) {
-            for (int x : range(width)) {
-                Pixel p = frame.pixels[y * frame.pitch + x];
-                // data[y * width + x] = (p.b & 0xF0) << 4 | (p.g & 0xF0) | (p.r & 0xF0) >> 4;
-                data[y * width + x] = (p.b & 0xF8) << 7 | (p.g & 0xF8) << 2 | (p.r & 0xF8) >> 3;
-            }
+    //allocate space for cooked frames
+    List<u32 *> cookedFrames = create_list<u32 *>(rawFrames.len + 1);
+    u32 * cookedMemBlock = (u32 *) malloc((rawFrames.len + 1) * width * height * sizeof(u32));
+    memset(cookedMemBlock, 0, width * height * sizeof(u32)); //set dummy frame to background color
+    for (int i = 0; i < (int) rawFrames.len + 1; ++i) {
+        cookedFrames.add(cookedMemBlock + width * height * i);
+    }
 
-            // Pixel * row = &frame.pixels[y * frame.pitch];
-            // for (int x = 0; x < width; x += 2 * 8) {
-            //     __m256i batch1 = _mm256_load_si256((__m256i *) &row[x]); //NOTE: assumes memory is aligned!
-            //     __m256i batch2 = _mm256_load_si256((__m256i *) &row[x + 8]);
-
-            //     __m256i b1 = _mm256_slli_epi32(_mm256_and_si256(batch1, _mm256_set1_epi32(0x0000F0)), 4);
-            //     __m256i g1 = _mm256_srli_epi32(_mm256_and_si256(batch1, _mm256_set1_epi32(0x00F000)), 8);
-            //     __m256i r1 = _mm256_srli_epi32(_mm256_and_si256(batch1, _mm256_set1_epi32(0xF00000)), 20);
-
-            //     __m256i b2 = _mm256_slli_epi32(_mm256_and_si256(batch2, _mm256_set1_epi32(0x0000F0)), 4);
-            //     __m256i g2 = _mm256_srli_epi32(_mm256_and_si256(batch2, _mm256_set1_epi32(0x00F000)), 8);
-            //     __m256i r2 = _mm256_srli_epi32(_mm256_and_si256(batch2, _mm256_set1_epi32(0xF00000)), 20);
-
-            //     __m256i quant1 = _mm256_or_si256(_mm256_or_si256(b1, g1), r1);
-            //     __m256i quant2 = _mm256_or_si256(_mm256_or_si256(b2, g2), r2);
-
-            //     //TODO: what is the difference between _mm256_permute2x128_si256 and _mm256_permute2f128_si256
-            //     __m256i pack1 = _mm256_shuffle_epi8(quant1, _mm256_setr_epi8(0, 1, 4, 5,  8,  9, 12, 13,
-            //                                                                  2, 3, 6, 7, 10, 11, 14, 15,
-            //                                                                  2, 3, 6, 7, 10, 11, 14, 15,
-            //                                                                  0, 1, 4, 5,  8,  9, 12, 13));
-            //     __m256i pack2 = _mm256_shuffle_epi8(quant2, _mm256_setr_epi8(0, 1, 4, 5,  8,  9, 12, 13,
-            //                                                                  2, 3, 6, 7, 10, 11, 14, 15,
-            //                                                                  2, 3, 6, 7, 10, 11, 14, 15,
-            //                                                                  0, 1, 4, 5,  8,  9, 12, 13));
-            //     __m256i perm1 = _mm256_permute2f128_si256(pack1, pack2, 0b00100000);
-            //     __m256i perm2 = _mm256_permute2f128_si256(pack1, pack2, 0b00110001);
-
-            //     __m256i result = _mm256_or_si256(perm1, perm2);
-            //     //TODO: make sure this memory is aligned and use an aligned store instead
-            //     _mm256_storeu_si256((__m256i *) &data[y * width + x], result);
-            // }
+    // now actually cook the frames
+    if (!dither) {
+        for (int i = 0; i < (int) rawFrames.len; ++i) {
+            cook_frame(rawFrames[i], cookedFrames[i + 1], width, height);
         }
-        cookedFrames.add(data);
     }
     timers.cook = get_time() - preCook;
 
@@ -174,21 +239,17 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
     //season the frames (apply mask)
     float preChoice = get_time();
-    MetaPaletteInfo meta = choose_meta_palette(cookedFrames, width, height);
+    MetaPaletteInfo meta = dither?
+        choose_meta_palette_dithered(rawFrames, cookedFrames, width, height)
+        : choose_meta_palette(cookedFrames, width, height);
     printf("conversion mask: %X\n", meta.cvtMask);
     timers.choice = get_time() - preChoice;
     float preMask = get_time();
-    if (meta.cvtMask != 0x7FFF) {
+    if (!dither && meta.cvtMask != 0x7FFF) {
         for (u32 * frame : cookedFrames) {
             for (int i : range(width * height)) {
                 frame[i] &= meta.cvtMask;
             }
-
-            // for (int i = 0; i < width * height; i += 16) {
-            //     __m256i in = _mm256_loadu_si256((__m256i *) &frame[i]);
-            //     __m256i out = _mm256_and_si256(in, _mm256_set1_epi16(meta.cvtMask));
-            //     _mm256_storeu_si256((__m256i *) &frame[i], out);
-            // }
         }
     }
     timers.mask = get_time() - preMask;
@@ -282,8 +343,8 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
         buf.write_unsafe<u16>(width);
         buf.write_unsafe<u16>(height);
         //local color table flag, interlace flag, sort flag, reserved, local color table size
-        buf.write_unsafe<u8>(0b10000000 | (tableBits - 1));
         // buf.write_unsafe<u8>(0b1'0'0'00'000 | (tableBits - 1));
+        buf.write_unsafe<u8>(0b10000000 | (tableBits - 1));
 
         //local color table
         buf.write_block(table, tableSize);
@@ -366,8 +427,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     buf.finalize();
     free(lzw.data);
     idxBuffer.finalize();
-    for (u32 * frame : cookedFrames)
-        free(frame);
+    free(cookedMemBlock);
     cookedFrames.finalize();
     free(meta.used);
 
