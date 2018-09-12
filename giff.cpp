@@ -1,7 +1,6 @@
 //NOTE: AVX2 optimizations and LZCNT don't appear to make GIF exporter any faster overall,
 //      so we have them disabled for now
 //TODO: figure out why they aren't faster
-//TODO: setup a GIF exporting test bench to more easily compare performance
 
 #include "giff.hpp"
 #include "common.hpp"
@@ -18,6 +17,8 @@
 #else
     #include <x86intrin.h>
 
+    //TODO: replace this with a builtin on clang and gcc,
+    //      and a generic version with de bruijn multiplication
     int bit_count(int i) {
         return _bit_scan_reverse(i) + 1;
     }
@@ -76,50 +77,12 @@ struct MetaPaletteInfo {
     bool * used;
 };
 
-MetaPaletteInfo choose_meta_palette(List<u32 *> cookedFrames, int width, int height) {
-    bool * used = (bool *) malloc(32768 * (cookedFrames.len - 1) * sizeof(bool));
-    // int cvtMasks[6] = { 0xFFF, 0xEFF, 0xEFE, 0xEEE, 0xCEE, 0xCEC }; //favor green > red > blue
-    // int cvtMasks[6] = { 0xFFF, 0xEFF, 0xEEF, 0xEEE, 0xCEE, 0xCCE }; //favor red > green > blue
-    int cvtMasks[9] = { 0b0111111111111111, 0b0111101111111111, 0b0111101111111110,
-                        0b0111101111011110, 0b0111001111011110, 0b0111001111011100,
-                        0b0111001110011100, 0b0110001110011100, 0b0110001110011000, };
-    int minPalette = 0;
-    for (int i : range(1, cookedFrames.len)) {
-        u32 * frame = cookedFrames[i];
-        bool * used1 = used + (i - 1) * 32768;
-
-        //mark down which colors are used out of the full 15-bit palette
-        memset(used1, 0, 32768 * sizeof(bool));
-        for (int i : range(width * height))
-            used1[frame[i]] = true;
-
-        //count how many fall into each meta-palette
-        for (int m : range(minPalette, 9)) {
-            bool used2[32768] = {};
-            for (int i : range(32768))
-                used2[i & cvtMasks[m]] |= used1[i];
-
-            int count = 0;
-            for (int i : range(32768))
-                if (used2[i])
-                    ++count; //XXX: should we break early here (if count > 255) for performance?
-
-            // printf("used %3d colors out of %4d      ", count, 1 << (15 - m));
-            if (count < 256)
-                break;
-            ++minPalette;
-        }
-        // printf("\n");
-    }
-
-    return { cvtMasks[minPalette], used };
-}
-
-void cook_frame(RawFrame raw, u32 * cooked, int width, int height) {
+void cook_frame(RawFrame raw, u32 * cooked, int width, int height, int cvtMask) {
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             Pixel p = raw.pixels[y * raw.pitch + x];
             cooked[y * width + x] = (p.b & 0xF8) << 7 | (p.g & 0xF8) << 2 | (p.r & 0xF8) >> 3;
+            cooked[y * width + x] &= cvtMask;
         }
     }
 }
@@ -168,8 +131,8 @@ void cook_frame_dithered(RawFrame raw, u32 * cooked, int width, int height, int 
     }
 }
 
-MetaPaletteInfo choose_meta_palette_dithered(
-        List<RawFrame> rawFrames, List<u32 *> cookedFrames, int width, int height)
+MetaPaletteInfo choose_meta_palette(
+        List<RawFrame> rawFrames, List<u32 *> cookedFrames, int width, int height, bool dither)
 {
     bool * used = (bool *) malloc(32768 * (cookedFrames.len - 1) * sizeof(bool));
     int cvtMasks[9] = { 0b0111111111111111, 0b0111101111111111, 0b0111101111111110,
@@ -180,14 +143,16 @@ MetaPaletteInfo choose_meta_palette_dithered(
     //      like a ring buffer, circling around until all frames are cooked with the same bit depth
     int minPalette = 0;
     int minCorrect = 0;
-    // for (int idx = 0; idx < minCorrect + cookedFrames.len; ++idx) {
     int idx = 0;
     while (idx < minCorrect + (int) cookedFrames.len - 1) {
         int i = idx % (cookedFrames.len - 1) + 1;
         u32 * frame = cookedFrames[i];
         bool * used1 = used + (i - 1) * 32768;
 
-        cook_frame_dithered(rawFrames[i - 1], frame, width, height, cvtMasks[minPalette]);
+        if (dither)
+            cook_frame_dithered(rawFrames[i - 1], frame, width, height, cvtMasks[minPalette]);
+        else
+            cook_frame(rawFrames[i - 1], frame, width, height, cvtMasks[minPalette]);
         //mark down which colors are used out of the full 15-bit palette
         memset(used1, 0, 32768 * sizeof(bool));
         for (int j = 0; j < width * height; ++j)
@@ -217,8 +182,8 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames,
                      int centiSeconds, const char * path, bool dither) {
     DebugTimers timers = {};
 
-    float preCook, preAmble, preTotal;
-    preCook = preAmble = preTotal = get_time();
+    float preAmble, preTotal;
+    preAmble = preTotal = get_time();
     //allocate space for cooked frames
     List<u32 *> cookedFrames = create_list<u32 *>(rawFrames.len + 1);
     u32 * cookedMemBlock = (u32 *) malloc((rawFrames.len + 1) * width * height * sizeof(u32));
@@ -227,32 +192,13 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames,
         cookedFrames.add(cookedMemBlock + width * height * i);
     }
 
-    // now actually cook the frames
-    if (!dither) {
-        for (int i = 0; i < (int) rawFrames.len; ++i) {
-            cook_frame(rawFrames[i], cookedFrames[i + 1], width, height);
-        }
-    }
-    timers.cook = get_time() - preCook;
-
 
 
     //season the frames (apply mask)
     float preChoice = get_time();
-    MetaPaletteInfo meta = dither?
-        choose_meta_palette_dithered(rawFrames, cookedFrames, width, height)
-        : choose_meta_palette(cookedFrames, width, height);
-    printf("conversion mask: %X\n", meta.cvtMask);
+    MetaPaletteInfo meta = choose_meta_palette(rawFrames, cookedFrames, width, height, dither);
     timers.choice = get_time() - preChoice;
-    float preMask = get_time();
-    if (!dither && meta.cvtMask != 0x7FFF) {
-        for (u32 * frame : cookedFrames) {
-            for (int i : range(width * height)) {
-                frame[i] &= meta.cvtMask;
-            }
-        }
-    }
-    timers.mask = get_time() - preMask;
+    printf("conversion mask: %X\n", meta.cvtMask);
     timers.amble = get_time() - preAmble;
 
     float preCompress = get_time();
@@ -291,7 +237,6 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames,
     for (int j : range(1, cookedFrames.len)) {
         u32 * pframe = cookedFrames[j - 1];
         u32 * cframe = cookedFrames[j];
-        // printf("\n\n\n\nnew frame\n\n\n\n");
 
         float prePalette = get_time();
         //generate palette
@@ -305,13 +250,10 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames,
             if (!tlb[newIdx] && used[i]) {
                 tlb[newIdx] = tableIdx;
                 table[tableIdx] = {
-                    // (u8)((i & 0x00F) << 4 | (i & 0x00F)     ),
-                    // (u8)((i & 0x0F0)      | (i & 0x0F0) >> 4),
-                    // (u8)((i & 0xF00) >> 4 | (i & 0xF00) >> 8),
                     //TODO: make the second shift amount depend on the bit depth of the channel?
-                    (u8)((i & 0x001F) << 3 | (i & 0x001f) >>  2),
-                    (u8)((i & 0x03E0) >> 2 | (i & 0x03E0) >>  7),
-                    (u8)((i & 0x7C00) >> 7 | (i & 0x7C00) >> 12),
+                    (u8)((newIdx & 0x001F) << 3 | (newIdx & 0x001F) >>  2),
+                    (u8)((newIdx & 0x03E0) >> 2 | (newIdx & 0x03E0) >>  7),
+                    (u8)((newIdx & 0x7C00) >> 7 | (newIdx & 0x7C00) >> 12),
                 };
                 ++tableIdx;
             }

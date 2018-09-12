@@ -50,7 +50,7 @@ int main() {
 		char * path = cat("out/", cat(names.begin()[i], ".gif"));
 		printf("\nwriting %s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
 			path, blob->width, blob->height, blob->frames, blob->centiSeconds);
-		timers.add(save_gif(blob->width, blob->height, frames, blob->centiSeconds, path, true));
+		timers.add(save_gif(blob->width, blob->height, frames, blob->centiSeconds, path, false));
 		printf("\n");
 		fflush(stdout);
 	}

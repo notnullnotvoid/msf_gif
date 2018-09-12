@@ -47,8 +47,10 @@ TODO:
 ! early-out of palette selection loop
 ! switch to using 4-byte ints for palette selection/quantization
 ! add optional dithering
-- switch to using bitfields for storing palette data
+! combine dithered and non-dithered code paths
+- pack bits together when cooking instead of just masking them out
 
+- switch to using bitfields for storing palette data?
 - SSE optimization
 - AVX optimization
 - multithreading
