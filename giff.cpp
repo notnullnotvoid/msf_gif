@@ -73,35 +73,25 @@ void reset(StridedList * lzw, int tableSize, int stride) {
 }
 
 struct MetaPaletteInfo {
-    int cvtMask;
-    bool * used;
+    bool * * used;
+    int rbits, gbits, bbits;
 };
 
-void cook_frame(RawFrame raw, u32 * cooked, int width, int height, int cvtMask) {
+void cook_frame(RawFrame raw, u32 * cooked, int width, int height,
+                int rbits, int gbits, int bbits) {
+
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             Pixel p = raw.pixels[y * raw.pitch + x];
-            cooked[y * width + x] = (p.b & 0xF8) << 7 | (p.g & 0xF8) << 2 | (p.r & 0xF8) >> 3;
-            cooked[y * width + x] &= cvtMask;
+            cooked[y * width + x] = p.b >> (8 - bbits) << (rbits + gbits) |
+                                    p.g >> (8 - gbits) <<  rbits |
+                                    p.r >> (8 - rbits);
         }
     }
 }
 
-int shift_amt(int mask) {
-    if (mask == 0x1F) return 3;
-    if (mask == 0x1E) return 2;
-    if (mask == 0x1C) return 1;
-    return 0;
-}
-
-void cook_frame_dithered(RawFrame raw, u32 * cooked, int width, int height, int cvtMask) {
-    int rmask = 0x001F & cvtMask;
-    int gmask = (0x03E0 & cvtMask) >> 5;
-    int bmask = (0x7C00 & cvtMask) >> 10;
-    int rshift = shift_amt(rmask);
-    int gshift = shift_amt(gmask);
-    int bshift = shift_amt(bmask);
-
+void cook_frame_dithered(RawFrame raw, u32 * cooked, int width, int height,
+                         int rbits, int gbits, int bbits) {
     int ditherKernel[8 * 8] = {
          0, 48, 12, 60,  3, 51, 15, 63,
         32, 16, 44, 28, 35, 19, 47, 31,
@@ -124,9 +114,10 @@ void cook_frame_dithered(RawFrame raw, u32 * cooked, int width, int height, int 
             Pixel p = raw.pixels[y * raw.pitch + x];
             int dx = x % 8, dy = y % 8;
             int k = ditherKernel[dy * 8 + dx];
-            cooked[y * width + x] = ((min(255, p.b + (k >> rshift)) & 0xF8) << 7 |
-                                     (min(255, p.g + (k >> gshift)) & 0xF8) << 2 |
-                                     (min(255, p.r + (k >> bshift)) & 0xF8) >> 3) & cvtMask;
+            cooked[y * width + x] =
+                min(255, p.b + (k >> (rbits - 2))) >> (8 - bbits) << (rbits + gbits) |
+                min(255, p.g + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits |
+                min(255, p.r + (k >> (bbits - 2))) >> (8 - rbits);
         }
     }
 }
@@ -134,10 +125,15 @@ void cook_frame_dithered(RawFrame raw, u32 * cooked, int width, int height, int 
 MetaPaletteInfo choose_meta_palette(
         List<RawFrame> rawFrames, List<u32 *> cookedFrames, int width, int height, bool dither)
 {
-    bool * used = (bool *) malloc(32768 * (cookedFrames.len - 1) * sizeof(bool));
-    int cvtMasks[9] = { 0b0111111111111111, 0b0111101111111111, 0b0111101111111110,
-                        0b0111101111011110, 0b0111001111011110, 0b0111001111011100,
-                        0b0111001110011100, 0b0110001110011100, 0b0110001110011000, };
+    bool * * used = (bool * *) malloc(rawFrames.len * sizeof(bool *));
+    //set to null so we can spuriously free() with no effect
+    memset(used, 0, rawFrames.len * sizeof(bool *));
+
+    //bit depth for each channel
+    int rbits[9] = { 5, 5, 4, 4, 4, 3, 3, 3, 2 };
+    int gbits[9] = { 5, 5, 5, 4, 4, 4, 3, 3, 3 };
+    int bbits[9] = { 5, 4, 4, 4, 3, 3, 3, 2, 2 };
+
     //NOTE: it's possible (if unlikely) for a reduction in bit depth to result in an increase in
     //      colors used for a given frame when dithering is applied, so we treat the list of frames
     //      like a ring buffer, circling around until all frames are cooked with the same bit depth
@@ -147,23 +143,29 @@ MetaPaletteInfo choose_meta_palette(
     while (idx < minCorrect + (int) cookedFrames.len - 1) {
         int i = idx % (cookedFrames.len - 1) + 1;
         u32 * frame = cookedFrames[i];
-        bool * used1 = used + (i - 1) * 32768;
+        // bool * used1 = used + (i - 1) * 32768;
+        int paletteSize = 1 << (15 - minPalette);
+        free(used[i - 1]);
+        used[i - 1] = (bool *) malloc(paletteSize * sizeof(bool));
 
         if (dither)
-            cook_frame_dithered(rawFrames[i - 1], frame, width, height, cvtMasks[minPalette]);
+            cook_frame_dithered(rawFrames[i - 1], frame, width, height,
+                rbits[minPalette], gbits[minPalette], bbits[minPalette]);
         else
-            cook_frame(rawFrames[i - 1], frame, width, height, cvtMasks[minPalette]);
+            cook_frame(rawFrames[i - 1], frame, width, height,
+                rbits[minPalette], gbits[minPalette], bbits[minPalette]);
+
         //mark down which colors are used out of the full 15-bit palette
-        memset(used1, 0, 32768 * sizeof(bool));
+        memset(used[i - 1], 0, paletteSize * sizeof(bool));
         for (int j = 0; j < width * height; ++j)
-            used1[frame[j]] = true;
+            used[i - 1][frame[j]] = true;
 
         //count how many fall into the meta-palette
         int count = 0;
-        for (int j = 0; j < 32768; ++j)
-            if (used1[j])
+        for (int j = 0; j < paletteSize; ++j)
+            if (used[i - 1][j])
                 ++count; //XXX: should we break early here (if count > 255) for performance?
-        // printf("frame %3d: %4d colors used out of %5d      ", i, count, 1 << (15 - minPalette));
+        // printf("frame %3d: %4d colors used out of %5d      ", i, count, paletteSize);
 
         if (count < 256) {
             ++idx;
@@ -175,7 +177,7 @@ MetaPaletteInfo choose_meta_palette(
         }
     }
 
-    return { cvtMasks[minPalette], used };
+    return { used, rbits[minPalette], gbits[minPalette], bbits[minPalette] };
 }
 
 DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames,
@@ -194,11 +196,10 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames,
 
 
 
-    //season the frames (apply mask)
     float preChoice = get_time();
     MetaPaletteInfo meta = choose_meta_palette(rawFrames, cookedFrames, width, height, dither);
     timers.choice = get_time() - preChoice;
-    printf("conversion mask: %X\n", meta.cvtMask);
+    printf("bits: %d, %d, %d\n", meta.rbits, meta.gbits, meta.bbits);
     timers.amble = get_time() - preAmble;
 
     float preCompress = get_time();
@@ -239,21 +240,32 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames,
         u32 * cframe = cookedFrames[j];
 
         float prePalette = get_time();
+        //allocate tlb
+        int totalBits = meta.rbits + meta.gbits + meta.bbits;
+        int tlbSize = 1 << totalBits;
+        u8 * tlb = (u8 *) malloc(tlbSize * sizeof(u8));
+
         //generate palette
-        u8 tlb[32768] = {};
         struct Color3 { u8 r, g, b; };
         Color3 table[256] = {};
         int tableIdx = 1; //we start counting at 1 because 0 is the transparent color
-        bool * used = meta.used + (j - 1) * 32768;
-        for (int i : range(32768)) {
-            int newIdx = i & meta.cvtMask;
-            if (!tlb[newIdx] && used[i]) {
-                tlb[newIdx] = tableIdx;
+        for (int i = 0; i < tlbSize; ++i) {
+            if (meta.used[j - 1][i]) {
+                tlb[i] = tableIdx;
+                int rmask = (1 << meta.rbits) - 1;
+                int gmask = (1 << meta.gbits) - 1;
+                //isolate components
+                int r = i & rmask;
+                int g = i >> meta.rbits & gmask;
+                int b = i >> (meta.rbits + meta.gbits);
+                //shift into highest bits
+                r <<= 8 - meta.rbits;
+                g <<= 8 - meta.gbits;
+                b <<= 8 - meta.bbits;
                 table[tableIdx] = {
-                    //TODO: make the second shift amount depend on the bit depth of the channel?
-                    (u8)((newIdx & 0x001F) << 3 | (newIdx & 0x001F) >>  2),
-                    (u8)((newIdx & 0x03E0) >> 2 | (newIdx & 0x03E0) >>  7),
-                    (u8)((newIdx & 0x7C00) >> 7 | (newIdx & 0x7C00) >> 12),
+                    (u8)(r | r >> meta.rbits),
+                    (u8)(g | g >> meta.gbits),
+                    (u8)(b | b >> meta.bbits),
                 };
                 ++tableIdx;
             }
@@ -263,7 +275,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames,
 
         int tableBits = bit_count(tableIdx - 1);
         int tableSize = 1 << tableBits;
-        // printf("idx: %d bits: %d size: %d\n\n\n\n", tableIdx, tableBits, tableSize);
+        // printf("idx: %d bits: %d size: %d\n\n", tableIdx, tableBits, tableSize);
 
         buf.check(8 + 10);
         //graphics control extension
@@ -375,28 +387,4 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames,
 
     timers.total = get_time() - preTotal;
     return timers;
-}
-
-void save_raw_frames(int width, int height, List<RawFrame> rawFrames, int centiSeconds) {
-    printf("width: %d   height: %d   frames: %d   centiSeconds: %d\n",
-            width, height, (int) rawFrames.len, centiSeconds);
-
-    FileBuffer buf = {};
-    buf.write(width);
-    buf.write(height);
-    buf.write<int>(rawFrames.len);
-    buf.write(centiSeconds);
-    for (RawFrame frame : rawFrames) {
-        for (int row = 0; row < height; ++row) {
-            buf.write_block(frame.pixels + row * frame.pitch, width);
-        }
-    }
-
-    //write data to file
-    FILE * fp = fopen("out.gif", "wb");
-    assert(fp);
-    fwrite(buf.block, buf.size(), 1, fp);
-    fclose(fp);
-
-    buf.finalize();
 }

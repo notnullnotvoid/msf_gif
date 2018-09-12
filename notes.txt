@@ -2,16 +2,6 @@ gif exporter notes
 
 
 
-add utility for writing raw frames glob
-write stand-alone project for rapid performance testing and development
-
-15-bit meta-meta-palette
-early-out of palette selection loop (for performance)
-
-SSE optimizations?
-multithreading???
-ensure it works with 32-bit code
-
 allow "immediate mode" (frame-by-frame) export
 	return opaque pointer to struct containing persistent state (no global data)
 	limited ability for immediate-mode payoff because all frames must be cooked before any can be compressed
@@ -32,11 +22,6 @@ remove C++isms to make it pure C code?
 turn into single-header library
 write documentation
 
-dithering???
-	would slow down cooking step and make it done twice (amortized) for each frame
-		not easy to parallelize the first pass, because each frame depends on the last... maybe SIMD would help though?
-			I'M AN IDIOT: the cooking algorithm is embarrassingly parallel! just multi-thread each frame individually!
-			and yes, SIMD would help immensely. just don't downconvert to 16-bit ints, or find a better way to do that
 true-color???
 	bitfield for color tracker?
 
@@ -48,11 +33,21 @@ TODO:
 ! switch to using 4-byte ints for palette selection/quantization
 ! add optional dithering
 ! combine dithered and non-dithered code paths
-- pack bits together when cooking instead of just masking them out
+! pack bits together when cooking instead of just masking them out
+- switch to using ints instead of pixel structs
+- add runtime option for channel importance order?
+- add runtime option for maximum bit depth?
 
-- switch to using bitfields for storing palette data?
 - SSE optimization
 - AVX optimization
 - multithreading
+- switch to using bitfields for storing palette data?
 
 - add test cases where width/height are not a multiple of 8
+- add test cases for smaller and larger GIFs?
+- put SIMD and multithreading behind preprocessor options
+- remove other header dependencies
+- custom malloc/realloc/free implementations?
+- allow different input data formats???
+- remove C++isms
+- make sure it compiles correctly on all targets (gcc + clang + msvc, 32 + 64 bit)
