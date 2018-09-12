@@ -27,13 +27,12 @@
 //forward declaration
 double get_time();
 
-//TODO: find a way to write the data blocks without storing up a buffer of 255 bytes
+//TODO: find a way to write the data blocks without storing up a buffer of 255 bytes?
 struct BlockBuffer {
     u16 bits;
     u8 bytes[257]; //up to 12 bits can be written at once, so we need 2 extra "overflow" bytes
 };
 
-//XXX: this is very slow because of how it uses the file buffer!
 void put_code(FileBuffer * buf, BlockBuffer * block, int bits, u16 code) {
     //insert new code into block buffer
     int idx = block->bits / 8;
@@ -79,13 +78,16 @@ struct MetaPaletteInfo {
 
 void cook_frame(RawFrame raw, u32 * cooked, int width, int height,
                 int rbits, int gbits, int bbits) {
-
+    int rmask = (1 << rbits) - 1;
+    int gmask = (1 << gbits) - 1;
+    int bmask = (1 << bbits) - 1;
+    int * pixels = (int *) raw.pixels;
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            Pixel p = raw.pixels[y * raw.pitch + x];
-            cooked[y * width + x] = p.b >> (8 - bbits) << (rbits + gbits) |
-                                    p.g >> (8 - gbits) <<  rbits |
-                                    p.r >> (8 - rbits);
+            int p = pixels[y * raw.pitch + x];
+            cooked[y * width + x] = (p >> ( 8 - bbits) & bmask) << (rbits + gbits) |
+                                    (p >> (16 - gbits) & gmask) <<  rbits          |
+                                    (p >> (24 - rbits) & rmask);
         }
     }
 }
@@ -109,15 +111,19 @@ void cook_frame_dithered(RawFrame raw, u32 * cooked, int width, int height,
     //     derivedKernel[i] = k >> rshift & k >> gshift << 8 & k >> bshift << 16;
     // }
 
+    int rmask = (1 << rbits) - 1;
+    int gmask = (1 << gbits) - 1;
+    int bmask = (1 << bbits) - 1;
+    int * pixels = (int *) raw.pixels;
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            Pixel p = raw.pixels[y * raw.pitch + x];
+            int p = pixels[y * raw.pitch + x];
             int dx = x % 8, dy = y % 8;
             int k = ditherKernel[dy * 8 + dx];
             cooked[y * width + x] =
-                min(255, p.b + (k >> (rbits - 2))) >> (8 - bbits) << (rbits + gbits) |
-                min(255, p.g + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits |
-                min(255, p.r + (k >> (bbits - 2))) >> (8 - rbits);
+                min(255, (p >>  0 & 0xFF) + (k >> (rbits - 2))) >> (8 - bbits) << (rbits + gbits) |
+                min(255, (p >>  8 & 0xFF) + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits          |
+                min(255, (p >> 16 & 0xFF) + (k >> (bbits - 2))) >> (8 - rbits);
         }
     }
 }
@@ -143,7 +149,6 @@ MetaPaletteInfo choose_meta_palette(
     while (idx < minCorrect + (int) cookedFrames.len - 1) {
         int i = idx % (cookedFrames.len - 1) + 1;
         u32 * frame = cookedFrames[i];
-        // bool * used1 = used + (i - 1) * 32768;
         int paletteSize = 1 << (15 - minPalette);
         free(used[i - 1]);
         used[i - 1] = (bool *) malloc(paletteSize * sizeof(bool));

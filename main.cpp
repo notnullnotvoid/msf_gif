@@ -16,7 +16,7 @@ double get_time() {
 
 struct RawBlob {
 	int width, height, frames, centiSeconds;
-	Pixel pixels[1];
+	int pixels[1];
 };
 
 int main() {
@@ -25,7 +25,7 @@ int main() {
 	printf("let's export some fuckin' gifs!\n");
 
 	//TODO: generate this list dynamically?
-	auto names = { "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "sky", "tiles" };
+	auto names = { "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "odd", "sky", "tiles" };
 
 	List<RawBlob *> blobs = {};
 
