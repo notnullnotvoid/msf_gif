@@ -47,12 +47,12 @@ int main() {
 		RawBlob * blob = blobs[i];
 		List<RawFrame> frames = {};
 		for (int j : range(blob->frames)) {
-			frames.add({ &blob->pixels[blob->width * blob->height * j], blob->width });
+			frames.add({ (u8 *) &blob->pixels[blob->width * blob->height * j], blob->width * 4 });
 		}
 		char * path = cat("out/", cat(names.begin()[i], ".gif"));
 		printf("\nwriting %s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
 			path, blob->width, blob->height, blob->frames, blob->centiSeconds);
-		timers.add(save_gif(blob->width, blob->height, frames, blob->centiSeconds, path, true));
+		timers.add(save_gif(blob->width, blob->height, frames, blob->centiSeconds, path, true, GIFF_FORMAT_BGRA));
 		printf("\n");
 		fflush(stdout);
 	}

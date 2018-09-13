@@ -25,6 +25,8 @@ write documentation
 true-color???
 	bitfield for color tracker?
 
+detecting user error? (i.e. invalid parameters)
+
 
 
 TODO:
@@ -34,7 +36,8 @@ TODO:
 ! add optional dithering
 ! combine dithered and non-dithered code paths
 ! pack bits together when cooking instead of just masking them out
-- switch to using ints instead of pixel structs
+! switch to using ints instead of pixel structs
+! allow different input data formats?
 - add runtime option for channel importance order?
 - add runtime option for maximum bit depth?
 
@@ -48,6 +51,5 @@ TODO:
 - put SIMD and multithreading behind preprocessor options
 - remove other header dependencies
 - custom malloc/realloc/free implementations?
-- allow different input data formats???
 - remove C++isms
 - make sure it compiles correctly on all targets (gcc + clang + msvc, 32 + 64 bit)

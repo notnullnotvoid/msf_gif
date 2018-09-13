@@ -27,7 +27,6 @@
 //forward declaration
 double get_time();
 
-//TODO: find a way to write the data blocks without storing up a buffer of 255 bytes?
 struct BlockBuffer {
     u16 bits;
     u8 bytes[257]; //up to 12 bits can be written at once, so we need 2 extra "overflow" bytes
@@ -77,23 +76,19 @@ struct MetaPaletteInfo {
 };
 
 void cook_frame(RawFrame raw, u32 * cooked, int width, int height,
-                int rbits, int gbits, int bbits) {
-    int rmask = (1 << rbits) - 1;
-    int gmask = (1 << gbits) - 1;
-    int bmask = (1 << bbits) - 1;
-    int * pixels = (int *) raw.pixels;
+                int rbits, int gbits, int bbits, PixelFormat format) {
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            int p = pixels[y * raw.pitch + x];
-            cooked[y * width + x] = (p >> ( 8 - bbits) & bmask) << (rbits + gbits) |
-                                    (p >> (16 - gbits) & gmask) <<  rbits          |
-                                    (p >> (24 - rbits) & rmask);
+            u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+            cooked[y * width + x] = p[format.bidx] >> (8 - bbits) << (rbits + gbits) |
+                                    p[format.gidx] >> (8 - gbits) <<  rbits          |
+                                    p[format.ridx] >> (8 - rbits);
         }
     }
 }
 
 void cook_frame_dithered(RawFrame raw, u32 * cooked, int width, int height,
-                         int rbits, int gbits, int bbits) {
+                         int rbits, int gbits, int bbits, PixelFormat format) {
     int ditherKernel[8 * 8] = {
          0, 48, 12, 60,  3, 51, 15, 63,
         32, 16, 44, 28, 35, 19, 47, 31,
@@ -111,26 +106,21 @@ void cook_frame_dithered(RawFrame raw, u32 * cooked, int width, int height,
     //     derivedKernel[i] = k >> rshift & k >> gshift << 8 & k >> bshift << 16;
     // }
 
-    int rmask = (1 << rbits) - 1;
-    int gmask = (1 << gbits) - 1;
-    int bmask = (1 << bbits) - 1;
-    int * pixels = (int *) raw.pixels;
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            int p = pixels[y * raw.pitch + x];
-            int dx = x % 8, dy = y % 8;
+            u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+            int dx = x & 7, dy = y & 7;
             int k = ditherKernel[dy * 8 + dx];
             cooked[y * width + x] =
-                min(255, (p >>  0 & 0xFF) + (k >> (rbits - 2))) >> (8 - bbits) << (rbits + gbits) |
-                min(255, (p >>  8 & 0xFF) + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits          |
-                min(255, (p >> 16 & 0xFF) + (k >> (bbits - 2))) >> (8 - rbits);
+                min(255, p[format.bidx] + (k >> (bbits - 2))) >> (8 - bbits) << (rbits + gbits) |
+                min(255, p[format.gidx] + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits          |
+                min(255, p[format.ridx] + (k >> (rbits - 2))) >> (8 - rbits);
         }
     }
 }
 
-MetaPaletteInfo choose_meta_palette(
-        List<RawFrame> rawFrames, List<u32 *> cookedFrames, int width, int height, bool dither)
-{
+MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *> cookedFrames,
+                                    int width, int height, bool dither, PixelFormat format) {
     bool * * used = (bool * *) malloc(rawFrames.len * sizeof(bool *));
     //set to null so we can spuriously free() with no effect
     memset(used, 0, rawFrames.len * sizeof(bool *));
@@ -155,10 +145,10 @@ MetaPaletteInfo choose_meta_palette(
 
         if (dither)
             cook_frame_dithered(rawFrames[i - 1], frame, width, height,
-                rbits[minPalette], gbits[minPalette], bbits[minPalette]);
+                rbits[minPalette], gbits[minPalette], bbits[minPalette], format);
         else
             cook_frame(rawFrames[i - 1], frame, width, height,
-                rbits[minPalette], gbits[minPalette], bbits[minPalette]);
+                rbits[minPalette], gbits[minPalette], bbits[minPalette], format);
 
         //mark down which colors are used out of the full 15-bit palette
         memset(used[i - 1], 0, paletteSize * sizeof(bool));
@@ -185,8 +175,8 @@ MetaPaletteInfo choose_meta_palette(
     return { used, rbits[minPalette], gbits[minPalette], bbits[minPalette] };
 }
 
-DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames,
-                     int centiSeconds, const char * path, bool dither) {
+DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds,
+                     const char * path, bool dither, PixelFormat format) {
     DebugTimers timers = {};
 
     float preAmble, preTotal;
@@ -202,7 +192,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames,
 
 
     float preChoice = get_time();
-    MetaPaletteInfo meta = choose_meta_palette(rawFrames, cookedFrames, width, height, dither);
+    MetaPaletteInfo meta = choose_meta_palette(rawFrames, cookedFrames, width, height, dither, format);
     timers.choice = get_time() - preChoice;
     printf("bits: %d, %d, %d\n", meta.rbits, meta.gbits, meta.bbits);
     timers.amble = get_time() - preAmble;
