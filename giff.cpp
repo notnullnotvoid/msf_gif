@@ -324,67 +324,38 @@ MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *> cooked
     return { used, rbits[minPalette], gbits[minPalette], bbits[minPalette] };
 }
 
-DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds,
-                     const char * path, bool dither, PixelFormat format) {
-    DebugTimers timers = {};
+struct CompressionData {
+    int width, height, centiSeconds;
+    int frameIdx;
+    MetaPaletteInfo meta;
+    List<u32 *> cookedFrames;
+    List<FileBuffer> compressedFrames;
+};
 
-    float preAmble, preTotal;
-    preAmble = preTotal = get_time();
-    //allocate space for cooked frames
-    List<u32 *> cookedFrames = create_list<u32 *>(rawFrames.len + 1);
-    u32 * cookedMemBlock = (u32 *) malloc((rawFrames.len + 1) * width * height * sizeof(u32));
-    memset(cookedMemBlock, 0, width * height * sizeof(u32)); //set dummy frame to background color
-    for (int i = 0; i < (int) rawFrames.len + 1; ++i) {
-        cookedFrames.add(cookedMemBlock + width * height * i);
-    }
-
-
-
-    float preChoice = get_time();
-    MetaPaletteInfo meta = choose_meta_palette(
-        rawFrames, cookedFrames, width, height, dither, format, timers);
-    timers.choice = get_time() - preChoice;
-    printf("bits: %d, %d, %d\n", meta.rbits, meta.gbits, meta.bbits);
-    timers.amble = get_time() - preAmble;
-
-    float preCompress = get_time();
-    //header
-    FileBuffer buf = create_file_buffer(2048);
-    for (char c : range("GIF89a")) {
-        buf.write_unsafe(c);
-    }
-
-    //logical screen descriptor
-    buf.write_unsafe<u16>(width);
-    buf.write_unsafe<u16>(height);
-    //global color table flag, color resolution (???), sort flag, global color table size
-    // buf.write_unsafe<u8>(0b0'001'0'000);
-    buf.write_unsafe<u8>(0b00010000);
-    buf.write_unsafe<u8>(0); //background color index
-    buf.write_unsafe<u8>(0); //pixel aspect ratio
-
-    //application extension
-    buf.write_unsafe<u8>(0x21); //extension introducer
-    buf.write_unsafe<u8>(0xFF); //extension identifier
-    buf.write_unsafe<u8>(11); //fixed length data size
-    for (char c : range("NETSCAPE2.0")) {
-        buf.write_unsafe(c);
-    }
-    buf.write_unsafe<u8>(3); //data block size
-    buf.write_unsafe<u8>(1); //???
-    buf.write_unsafe<u16>(0); //loop forever
-    buf.write_unsafe<u8>(0); //block terminator
-
+void compress_frames(CompressionData * data) {
     // StridedList lzw = { (i16 *) malloc(4096 * (meta.maxUsed + 1) * sizeof(i16)) };
     StridedList lzw = { (i16 *) malloc(4096 * 256 * sizeof(i16)) };
     List<u8> idxBuffer = create_list<u8>(200);
-    uint largestIdxBuffer = 0; //DEBUG
 
-    for (int j : range(1, cookedFrames.len)) {
-        u32 * pframe = cookedFrames[j - 1];
-        u32 * cframe = cookedFrames[j];
+    while (true) {
+        //LOCK
+        if (data->frameIdx >= (int) data->cookedFrames.len) {
+            //UNLOCK
+            free(lzw.data);
+            idxBuffer.finalize();
+            return; //EXIT
+        }
+        int frameIdx = data->frameIdx;
+        ++data->frameIdx;
+        //UNLOCK
 
-        float prePalette = get_time();
+        u32 * pframe = data->cookedFrames[frameIdx - 1];
+        u32 * cframe = data->cookedFrames[frameIdx];
+        MetaPaletteInfo meta = data->meta;
+        int width = data->width, height = data->height, centiSeconds = data->centiSeconds;
+        FileBuffer buf = {}; //TODO: pre-allocate a reasonable amount
+
+        // float prePalette = get_time();
         //allocate tlb
         int totalBits = meta.rbits + meta.gbits + meta.bbits;
         int tlbSize = 1 << totalBits;
@@ -395,7 +366,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
         Color3 table[256] = {};
         int tableIdx = 1; //we start counting at 1 because 0 is the transparent color
         for (int i = 0; i < tlbSize; ++i) {
-            if (meta.used[j - 1][i]) {
+            if (meta.used[frameIdx - 1][i]) {
                 tlb[i] = tableIdx;
                 int rmask = (1 << meta.rbits) - 1;
                 int gmask = (1 << meta.gbits) - 1;
@@ -416,7 +387,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
             }
         }
         // printf("frame %d uses %d colors\n", j, tableIdx);
-        timers.palette += get_time() - prePalette;
+        // timers.palette += get_time() - prePalette;
 
         int tableBits = bit_count(tableIdx - 1);
         int tableSize = 1 << tableBits;
@@ -430,7 +401,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
         //reserved, disposal method:keep, input flag, transparency flag
         //NOTE: MSVC incorrectly generates warning C4806 here due to a compiler bug.
         // buf.write_unsafe<u8>(0b000'001'0'0 | (j != 1));
-        buf.write_unsafe<u8>(0b00000100 | (j != 1));
+        buf.write_unsafe<u8>(0b00000100 | (frameIdx != 1));
         buf.write_unsafe<u16>(centiSeconds); //x/100 seconds per frame
         buf.write_unsafe<u8>(0); //transparent color index
         buf.write_unsafe<u8>(0); //block terminator
@@ -455,7 +426,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
         //XXX: do we actually need to write this?
         put_code(&buf, &block, bit_count(lzw.len - 1), tableSize); //clear code
 
-        float preInner = get_time();
+        // float preInner = get_time();
         int lastCode = cframe[0] == pframe[0]? 0 : tlb[cframe[0]];
         for (int i : range(1, width * height)) {
             idxBuffer.add(cframe[i] == pframe[i]? 0 : tlb[cframe[i]]);
@@ -488,10 +459,10 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
             }
 
             //DEBUG
-            if (idxBuffer.len > largestIdxBuffer)
-                largestIdxBuffer = idxBuffer.len;
+            // if (idxBuffer.len > largestIdxBuffer)
+            //     largestIdxBuffer = idxBuffer.len;
         }
-        timers.inner += get_time() - preInner;
+        // timers.inner += get_time() - preInner;
 
         //write code for leftover index buffer contents, then the end code
         put_code(&buf, &block, bit_count(lzw.len - 1), lastCode);
@@ -507,12 +478,77 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
         buf.write<u8>(0); //terminating block
         idxBuffer.len = 0; //reset encoding state
-    }
-    timers.compress = get_time() - preCompress;
 
-    printf("largest idx buffer: %d\n", largestIdxBuffer); //DEBUG
+        data->compressedFrames[frameIdx - 1] = buf;
+    }
+}
+
+DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds,
+                     const char * path, bool dither, PixelFormat format) {
+    DebugTimers timers = {};
+
+    float preAmble, preTotal;
+    preAmble = preTotal = get_time();
+    //allocate space for cooked frames
+    List<u32 *> cookedFrames = create_list<u32 *>(rawFrames.len + 1);
+    u32 * cookedMemBlock = (u32 *) malloc((rawFrames.len + 1) * width * height * sizeof(u32));
+    memset(cookedMemBlock, 0, width * height * sizeof(u32)); //set dummy frame to background color
+    for (int i = 0; i < (int) rawFrames.len + 1; ++i) {
+        cookedFrames.add(cookedMemBlock + width * height * i);
+    }
+
+
+
+    float preChoice = get_time();
+    MetaPaletteInfo meta = choose_meta_palette(
+        rawFrames, cookedFrames, width, height, dither, format, timers);
+    timers.choice = get_time() - preChoice;
+    printf("bits: %d, %d, %d\n", meta.rbits, meta.gbits, meta.bbits);
+    timers.amble = get_time() - preAmble;
+
+
+
+    float preCompress = get_time();
+    //header
+    FileBuffer buf = create_file_buffer(2048);
+    for (char c : range("GIF89a")) {
+        buf.write_unsafe(c);
+    }
+
+    //logical screen descriptor
+    buf.write_unsafe<u16>(width);
+    buf.write_unsafe<u16>(height);
+    //global color table flag, color resolution (???), sort flag, global color table size
+    // buf.write_unsafe<u8>(0b0'001'0'000);
+    buf.write_unsafe<u8>(0b00010000);
+    buf.write_unsafe<u8>(0); //background color index
+    buf.write_unsafe<u8>(0); //pixel aspect ratio
+
+    //application extension
+    buf.write_unsafe<u8>(0x21); //extension introducer
+    buf.write_unsafe<u8>(0xFF); //extension identifier
+    buf.write_unsafe<u8>(11); //fixed length data size
+    for (char c : range("NETSCAPE2.0")) {
+        buf.write_unsafe(c);
+    }
+    buf.write_unsafe<u8>(3); //data block size
+    buf.write_unsafe<u8>(1); //???
+    buf.write_unsafe<u16>(0); //loop forever
+    buf.write_unsafe<u8>(0); //block terminator
+
+    CompressionData data = { width, height, centiSeconds, 1, meta, cookedFrames,
+                             create_list<FileBuffer>(cookedFrames.len - 1) };
+    data.compressedFrames.len = data.compressedFrames.max;
+
+    compress_frames(&data);
+
+    for (FileBuffer b : data.compressedFrames) {
+        buf.write_block(b.block, b.size());
+    }
 
     buf.write<u8>(0x3B); //trailing marker
+
+    timers.compress = get_time() - preCompress;
 
     float preWrite = get_time();
     //write data to file
@@ -524,8 +560,8 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
     //cleanup
     buf.finalize();
-    free(lzw.data);
-    idxBuffer.finalize();
+    // free(lzw.data);
+    // idxBuffer.finalize();
     free(cookedMemBlock);
     cookedFrames.finalize();
     free(meta.used);

@@ -1,6 +1,7 @@
 #ifndef FILEBUFFER_HPP
 #define FILEBUFFER_HPP
 
+#include <assert.h>
 #include <stdlib.h>
 
 //TODO: add method to re-align "head" pointer

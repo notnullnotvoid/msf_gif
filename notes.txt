@@ -38,18 +38,20 @@ TODO:
 ! pack bits together when cooking instead of just masking them out
 ! switch to using ints instead of pixel structs
 ! allow different input data formats?
-- add runtime option for channel importance order?
-- add runtime option for maximum bit depth?
 
 ! SSE optimization
 ! AVX optimization
 - multithreading
-- switch to using bitfields for storing palette data?
 
+- add runtime option for channel importance order?
+- add runtime option for maximum bit depth?
 - add test cases where width/height are not a multiple of 8
 - add test cases for smaller and larger GIFs?
 - put SIMD and multithreading behind preprocessor options
+- runtime options for thread count
 - remove other header dependencies
 - custom malloc/realloc/free implementations?
 - remove C++isms
 - make sure it compiles correctly on all targets (gcc + clang + msvc, 32 + 64 bit)
+- asserts for invalid user parameters?
+- combine header and implementation
