@@ -41,8 +41,8 @@ TODO:
 - add runtime option for channel importance order?
 - add runtime option for maximum bit depth?
 
-- SSE optimization
-- AVX optimization
+! SSE optimization
+! AVX optimization
 - multithreading
 - switch to using bitfields for storing palette data?
 

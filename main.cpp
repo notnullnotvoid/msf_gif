@@ -52,16 +52,17 @@ int main() {
 		char * path = cat("out/", cat(names.begin()[i], ".gif"));
 		printf("\nwriting %s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
 			path, blob->width, blob->height, blob->frames, blob->centiSeconds);
-		timers.add(save_gif(blob->width, blob->height, frames, blob->centiSeconds, path, true, GIFF_FORMAT_BGRA));
+		timers.add(save_gif(blob->width, blob->height, frames, blob->centiSeconds, path, false, GIFF_FORMAT_BGRA));
 		printf("\n");
 		fflush(stdout);
 	}
 
 	DebugTimers totals = {};
 	for (int i : range(timers.len)) {
-		printf("%12s      cook: %6.4f   choice: %6.4f   amble: %6.4f   palette: %6.4f   inner: %6.4f   compress: %6.4f   write: %6.4f   total: %6.4f\n",
-			names.begin()[i], timers[i].cook, timers[i].choice, timers[i].amble, timers[i].palette, timers[i].inner, timers[i].compress, timers[i].write, timers[i].total);
+		printf("%12s      cook: %6.4f   count: %6.4f   choice: %6.4f   amble: %6.4f   palette: %6.4f   inner: %6.4f   compress: %6.4f   write: %6.4f   total: %6.4f\n",
+			names.begin()[i], timers[i].cook, timers[i].count, timers[i].choice, timers[i].amble, timers[i].palette, timers[i].inner, timers[i].compress, timers[i].write, timers[i].total);
 		totals.cook += timers[i].cook;
+		totals.count += timers[i].count;
 		totals.choice += timers[i].choice;
 		totals.amble += timers[i].amble;
 		totals.palette += timers[i].palette;
@@ -70,8 +71,8 @@ int main() {
 		totals.write += timers[i].write;
 		totals.total += timers[i].total;
 	}
-	printf("\n%12s      cook: %6.4f   choice: %6.4f   amble: %6.4f   palette: %6.4f   inner: %6.4f   compress: %6.4f   write: %6.4f   total: %6.4f\n",
-		"totals", totals.cook, totals.choice, totals.amble, totals.palette, totals.inner, totals.compress, totals.write, totals.total);
+	printf("\n%12s      cook: %6.4f   count: %6.4f   choice: %6.4f   amble: %6.4f   palette: %6.4f   inner: %6.4f   compress: %6.4f   write: %6.4f   total: %6.4f\n",
+		"totals", totals.cook, totals.count, totals.choice, totals.amble, totals.palette, totals.inner, totals.compress, totals.write, totals.total);
 	printf("lost time:   %6.4f\n\n", totals.total - (totals.amble + totals.compress + totals.write));
 
 	//TODO: track input and output sizes and encode speed for each GIF and for all of them together

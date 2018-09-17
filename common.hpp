@@ -130,21 +130,21 @@ static inline char * cat(const char * a, const char * b) {
 ////////////////////////////////////////////////////////////////////////////////
 
 //a simplified version of https://gist.github.com/p2004a/045726d70a490d12ad62
-template <typename F>
-struct _defer {
-    F f;
-    _defer(F f) : f(f) {}
-    ~_defer() { f(); }
-};
+// template <typename F>
+// struct _defer {
+//     F f;
+//     _defer(F f) : f(f) {}
+//     ~_defer() { f(); }
+// };
 
-static const struct {
-    template <typename F>
-    _defer<F> operator<<(F f) { return _defer<F>(f); };
-} _deferrer;
+// static const struct {
+//     template <typename F>
+//     _defer<F> operator<<(F f) { return _defer<F>(f); };
+// } _deferrer;
 
-#define TOKENPASTE2(x, y) x ## y
-#define TOKENPASTE(x, y) TOKENPASTE2(x, y)
-#define defer auto TOKENPASTE(__deferred_lambda_call, __COUNTER__) = _deferrer << [&]
+// #define TOKENPASTE2(x, y) x ## y
+// #define TOKENPASTE(x, y) TOKENPASTE2(x, y)
+// #define defer auto TOKENPASTE(__deferred_lambda_call, __COUNTER__) = _deferrer << [&]
 
 ////////////////////////////////////////////////////////////////////////////////
 /// ???                                                                      ///

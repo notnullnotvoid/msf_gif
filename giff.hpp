@@ -10,7 +10,7 @@ struct RawFrame {
 };
 
 struct DebugTimers {
-	float cook, choice, amble, palette, inner, compress, write, total;
+	float cook, count, choice, amble, palette, inner, compress, write, total;
 };
 
 struct PixelFormat {

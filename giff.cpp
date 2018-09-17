@@ -20,7 +20,8 @@
     //TODO: replace this with a builtin on clang and gcc,
     //      and a generic version with de bruijn multiplication
     int bit_count(int i) {
-        return _bit_scan_reverse(i) + 1;
+        // return _bit_scan_reverse(i) + 1;
+        return 32 - __builtin_clz(i);
     }
 #endif
 
@@ -75,14 +76,80 @@ struct MetaPaletteInfo {
     int rbits, gbits, bbits;
 };
 
+bool simd_friendly(PixelFormat f) {
+    return f.stride == 4 && f.ridx >= 0 && f.ridx < 4
+                         && f.gidx >= 0 && f.gidx < 4
+                         && f.bidx >= 0 && f.bidx < 4;
+}
+
 void cook_frame(RawFrame raw, u32 * cooked, int width, int height,
                 int rbits, int gbits, int bbits, PixelFormat format) {
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
-            cooked[y * width + x] = p[format.bidx] >> (8 - bbits) << (rbits + gbits) |
-                                    p[format.gidx] >> (8 - gbits) <<  rbits          |
-                                    p[format.ridx] >> (8 - rbits);
+    if (simd_friendly(format)) {
+        int rshift = format.ridx * 8 + 8 - rbits;
+        int gshift = format.gidx * 8 + 8 - gbits;
+        int bshift = format.bidx * 8 + 8 - bbits;
+        __m128i rmask = _mm_set1_epi32((1 << rbits) - 1);
+        __m128i gmask = _mm_set1_epi32((1 << gbits) - 1);
+        __m128i bmask = _mm_set1_epi32((1 << bbits) - 1);
+        for (int y = 0; y < height; ++y) {
+            int x = 0;
+            for (; x < width - 3; x += 4) {
+                u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+                u32 * c = &cooked[y * width + x];
+                __m128i in = _mm_loadu_si128((__m128i *) p);
+                __m128i r = _mm_and_si128(_mm_srli_epi32(in, rshift), rmask);
+                __m128i g = _mm_and_si128(_mm_srli_epi32(in, gshift), gmask);
+                __m128i b = _mm_and_si128(_mm_srli_epi32(in, bshift), bmask);
+                g = _mm_slli_epi32(g, rbits);
+                b = _mm_slli_epi32(b, rbits + gbits);
+                __m128i out = _mm_or_si128(r, _mm_or_si128(g, b));
+                _mm_storeu_si128((__m128i *) c, out);
+            }
+
+            for (; x < width; ++x) {
+                u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+                cooked[y * width + x] = p[format.bidx] >> (8 - bbits) << (rbits + gbits) |
+                                        p[format.gidx] >> (8 - gbits) <<  rbits          |
+                                        p[format.ridx] >> (8 - rbits);
+            }
+        }
+
+        // int rshift = format.ridx * 8 + 8 - rbits;
+        // int gshift = format.gidx * 8 + 8 - gbits;
+        // int bshift = format.bidx * 8 + 8 - bbits;
+        // __m256i rmask = _mm256_set1_epi32((1 << rbits) - 1);
+        // __m256i gmask = _mm256_set1_epi32((1 << gbits) - 1);
+        // __m256i bmask = _mm256_set1_epi32((1 << bbits) - 1);
+        // for (int y = 0; y < height; ++y) {
+        //     int x = 0;
+        //     for (; x < width - 7; x += 8) {
+        //         u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+        //         u32 * c = &cooked[y * width + x];
+        //         __m256i in = _mm256_loadu_si256((__m256i *) p);
+        //         __m256i r = _mm256_and_si256(_mm256_srli_epi32(in, rshift), rmask);
+        //         __m256i g = _mm256_and_si256(_mm256_srli_epi32(in, gshift), gmask);
+        //         __m256i b = _mm256_and_si256(_mm256_srli_epi32(in, bshift), bmask);
+        //         g = _mm256_slli_epi32(g, rbits);
+        //         b = _mm256_slli_epi32(b, rbits + gbits);
+        //         __m256i out = _mm256_or_si256(r, _mm256_or_si256(g, b));
+        //         _mm256_storeu_si256((__m256i *) c, out);
+        //     }
+
+        //     for (; x < width; ++x) {
+        //         u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+        //         cooked[y * width + x] = p[format.bidx] >> (8 - bbits) << (rbits + gbits) |
+        //                                 p[format.gidx] >> (8 - gbits) <<  rbits          |
+        //                                 p[format.ridx] >> (8 - rbits);
+        //     }
+        // }
+    } else {
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+                cooked[y * width + x] = p[format.bidx] >> (8 - bbits) << (rbits + gbits) |
+                                        p[format.gidx] >> (8 - gbits) <<  rbits          |
+                                        p[format.ridx] >> (8 - rbits);
+            }
         }
     }
 }
@@ -100,27 +167,105 @@ void cook_frame_dithered(RawFrame raw, u32 * cooked, int width, int height,
         42, 26, 38, 22, 41, 25, 37, 21,
     };
 
-    // int derivedKernel[8 * 8];
-    // for (int i = 0; i < 8 * 8; ++i) {
-    //     int k = ditherKernel[i];
-    //     derivedKernel[i] = k >> rshift & k >> gshift << 8 & k >> bshift << 16;
-    // }
+    if (simd_friendly(format)) {
+    // if (false) {
+        int derivedKernel[8 * 8];
+        for (int i = 0; i < 8 * 8; ++i) {
+            int k = ditherKernel[i];
+            //TODO: make this happen in the right order?
+            derivedKernel[i] = k >> (rbits - 2) | k >> (gbits - 2) << 8 | k >> (bbits - 2) << 16;
+        }
 
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
-            int dx = x & 7, dy = y & 7;
-            int k = ditherKernel[dy * 8 + dx];
-            cooked[y * width + x] =
-                min(255, p[format.bidx] + (k >> (bbits - 2))) >> (8 - bbits) << (rbits + gbits) |
-                min(255, p[format.gidx] + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits          |
-                min(255, p[format.ridx] + (k >> (rbits - 2))) >> (8 - rbits);
+        int rshift = format.ridx * 8 + 8 - rbits;
+        int gshift = format.gidx * 8 + 8 - gbits;
+        int bshift = format.bidx * 8 + 8 - bbits;
+        __m128i rmask = _mm_set1_epi32((1 << rbits) - 1);
+        __m128i gmask = _mm_set1_epi32((1 << gbits) - 1);
+        __m128i bmask = _mm_set1_epi32((1 << bbits) - 1);
+        for (int y = 0; y < height; ++y) {
+            int x = 0;
+            for (; x < width - 3; x += 4) {
+                u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+                u32 * c = &cooked[y * width + x];
+                int dx = x & 7, dy = y & 7;
+                int * kp = &derivedKernel[dy * 8 + dx];
+
+                __m128i in = _mm_loadu_si128((__m128i *) p);
+                __m128i k = _mm_loadu_si128((__m128i *) kp);
+                in = _mm_adds_epu8(in, k);
+                __m128i r = _mm_and_si128(_mm_srli_epi32(in, rshift), rmask);
+                __m128i g = _mm_and_si128(_mm_srli_epi32(in, gshift), gmask);
+                __m128i b = _mm_and_si128(_mm_srli_epi32(in, bshift), bmask);
+                g = _mm_slli_epi32(g, rbits);
+                b = _mm_slli_epi32(b, rbits + gbits);
+                __m128i out = _mm_or_si128(r, _mm_or_si128(g, b));
+                _mm_storeu_si128((__m128i *) c, out);
+            }
+
+            for (; x < width; ++x) {
+                u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+                int dx = x & 7, dy = y & 7;
+                int k = ditherKernel[dy * 8 + dx];
+                cooked[y * width + x] =
+                    min(255, p[format.bidx] + (k >> (bbits - 2))) >> (8 - bbits) << (rbits + gbits) |
+                    min(255, p[format.gidx] + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits          |
+                    min(255, p[format.ridx] + (k >> (rbits - 2))) >> (8 - rbits);
+            }
+        }
+
+        // int rshift = format.ridx * 8 + 8 - rbits;
+        // int gshift = format.gidx * 8 + 8 - gbits;
+        // int bshift = format.bidx * 8 + 8 - bbits;
+        // __m256i rmask = _mm256_set1_epi32((1 << rbits) - 1);
+        // __m256i gmask = _mm256_set1_epi32((1 << gbits) - 1);
+        // __m256i bmask = _mm256_set1_epi32((1 << bbits) - 1);
+        // for (int y = 0; y < height; ++y) {
+        //     __m256i k = _mm256_loadu_si256((__m256i *) &derivedKernel[(y & 7) * 8]);
+
+        //     int x = 0;
+        //     for (; x < width - 7; x += 8) {
+        //         u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+        //         u32 * c = &cooked[y * width + x];
+
+        //         __m256i in = _mm256_loadu_si256((__m256i *) p);
+        //         in = _mm256_adds_epu8(in, k);
+        //         __m256i r = _mm256_and_si256(_mm256_srli_epi32(in, rshift), rmask);
+        //         __m256i g = _mm256_and_si256(_mm256_srli_epi32(in, gshift), gmask);
+        //         __m256i b = _mm256_and_si256(_mm256_srli_epi32(in, bshift), bmask);
+        //         g = _mm256_slli_epi32(g, rbits);
+        //         b = _mm256_slli_epi32(b, rbits + gbits);
+        //         __m256i out = _mm256_or_si256(r, _mm256_or_si256(g, b));
+        //         _mm256_storeu_si256((__m256i *) c, out);
+        //     }
+
+        //     for (; x < width; ++x) {
+        //         u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+        //         int dx = x & 7, dy = y & 7;
+        //         int k = ditherKernel[dy * 8 + dx];
+        //         cooked[y * width + x] =
+        //             min(255, p[format.bidx] + (k >> (bbits - 2))) >> (8 - bbits) << (rbits + gbits) |
+        //             min(255, p[format.gidx] + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits          |
+        //             min(255, p[format.ridx] + (k >> (rbits - 2))) >> (8 - rbits);
+        //     }
+        // }
+    } else {
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+                int dx = x & 7, dy = y & 7;
+                int k = ditherKernel[dy * 8 + dx];
+                cooked[y * width + x] =
+                    min(255, p[format.bidx] + (k >> (bbits - 2))) >> (8 - bbits) << (rbits + gbits) |
+                    min(255, p[format.gidx] + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits          |
+                    min(255, p[format.ridx] + (k >> (rbits - 2))) >> (8 - rbits);
+            }
         }
     }
 }
 
 MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *> cookedFrames,
-                                    int width, int height, bool dither, PixelFormat format) {
+                                    int width, int height, bool dither, PixelFormat format,
+                                    DebugTimers & timers) {
     bool * * used = (bool * *) malloc(rawFrames.len * sizeof(bool *));
     //set to null so we can spuriously free() with no effect
     memset(used, 0, rawFrames.len * sizeof(bool *));
@@ -143,24 +288,28 @@ MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *> cooked
         free(used[i - 1]);
         used[i - 1] = (bool *) malloc(paletteSize * sizeof(bool));
 
+        float preCook = get_time();
         if (dither)
             cook_frame_dithered(rawFrames[i - 1], frame, width, height,
                 rbits[minPalette], gbits[minPalette], bbits[minPalette], format);
         else
             cook_frame(rawFrames[i - 1], frame, width, height,
                 rbits[minPalette], gbits[minPalette], bbits[minPalette], format);
+        timers.cook += get_time() - preCook;
 
         //mark down which colors are used out of the full 15-bit palette
         memset(used[i - 1], 0, paletteSize * sizeof(bool));
         for (int j = 0; j < width * height; ++j)
             used[i - 1][frame[j]] = true;
 
+        float preCount = get_time();
         //count how many fall into the meta-palette
         int count = 0;
         for (int j = 0; j < paletteSize; ++j)
             if (used[i - 1][j])
                 ++count; //XXX: should we break early here (if count > 255) for performance?
         // printf("frame %3d: %4d colors used out of %5d      ", i, count, paletteSize);
+        timers.count += get_time() - preCount;
 
         if (count < 256) {
             ++idx;
@@ -192,7 +341,8 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
 
     float preChoice = get_time();
-    MetaPaletteInfo meta = choose_meta_palette(rawFrames, cookedFrames, width, height, dither, format);
+    MetaPaletteInfo meta = choose_meta_palette(
+        rawFrames, cookedFrames, width, height, dither, format, timers);
     timers.choice = get_time() - preChoice;
     printf("bits: %d, %d, %d\n", meta.rbits, meta.gbits, meta.bbits);
     timers.amble = get_time() - preAmble;
