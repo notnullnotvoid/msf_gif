@@ -2,9 +2,19 @@
 //      so we have them disabled for now
 //TODO: figure out why they aren't faster
 
+//threading TODOS:
+//- use atomic builtins for compression threads
+//- dynamically determine physical/logical core count
+//- multithread frame cooking using atomic builtins
+//- make threading code work on win/MSVC as well
+//- put threading code behind preprocessor option
+//- allow user to specify preferred thread count at runtime
+
 #include "giff.hpp"
 #include "common.hpp"
 #include "FileBuffer.hpp"
+
+#include <pthread.h>
 
 #ifdef _MSC_VER
     #include <intrin.h>
@@ -167,13 +177,13 @@ void cook_frame_dithered(RawFrame raw, u32 * cooked, int width, int height,
         42, 26, 38, 22, 41, 25, 37, 21,
     };
 
-    if (simd_friendly(format)) {
-    // if (false) {
+    if (simd_friendly(format) && !(format.ridx == format.gidx || format.ridx == format.bidx)) {
         int derivedKernel[8 * 8];
         for (int i = 0; i < 8 * 8; ++i) {
             int k = ditherKernel[i];
-            //TODO: make this happen in the right order?
-            derivedKernel[i] = k >> (rbits - 2) | k >> (gbits - 2) << 8 | k >> (bbits - 2) << 16;
+            derivedKernel[i] = k >> (rbits - 2) << format.ridx * 8 |
+                               k >> (gbits - 2) << format.gidx * 8 |
+                               k >> (bbits - 2) << format.bidx * 8;
         }
 
         int rshift = format.ridx * 8 + 8 - rbits;
@@ -330,24 +340,26 @@ struct CompressionData {
     MetaPaletteInfo meta;
     List<u32 *> cookedFrames;
     List<FileBuffer> compressedFrames;
+    pthread_mutex_t mutex;
 };
 
-void compress_frames(CompressionData * data) {
+void * compress_frames(void * dataArg) {
+    CompressionData * data = (CompressionData *) dataArg;
     // StridedList lzw = { (i16 *) malloc(4096 * (meta.maxUsed + 1) * sizeof(i16)) };
     StridedList lzw = { (i16 *) malloc(4096 * 256 * sizeof(i16)) };
     List<u8> idxBuffer = create_list<u8>(200);
 
     while (true) {
-        //LOCK
+        pthread_mutex_lock(&data->mutex);
         if (data->frameIdx >= (int) data->cookedFrames.len) {
-            //UNLOCK
+            pthread_mutex_unlock(&data->mutex);
             free(lzw.data);
             idxBuffer.finalize();
-            return; //EXIT
+            return nullptr;
         }
         int frameIdx = data->frameIdx;
         ++data->frameIdx;
-        //UNLOCK
+        pthread_mutex_unlock(&data->mutex);
 
         u32 * pframe = data->cookedFrames[frameIdx - 1];
         u32 * cframe = data->cookedFrames[frameIdx];
@@ -539,8 +551,22 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     CompressionData data = { width, height, centiSeconds, 1, meta, cookedFrames,
                              create_list<FileBuffer>(cookedFrames.len - 1) };
     data.compressedFrames.len = data.compressedFrames.max;
+    pthread_mutex_init(&data.mutex, nullptr);
 
-    compress_frames(&data);
+    printf("sizeof pthread, mutex: %lu, %lu\n", sizeof(pthread_t), sizeof(pthread_mutex_t));
+    int threadCount = 8;
+    pthread_t threads[8];
+    //ensure that threads will be joinable (this is not guaranteed to be a default setting)
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+    for (int i = 0; i < threadCount; ++i) {
+        pthread_create(&threads[i], nullptr, compress_frames, &data);
+    }
+
+    for (int i = 0; i < threadCount; ++i) {
+        pthread_join(threads[i], nullptr);
+    }
 
     for (FileBuffer b : data.compressedFrames) {
         buf.write_block(b.block, b.size());
