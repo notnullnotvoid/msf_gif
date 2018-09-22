@@ -3,6 +3,7 @@
 
 #include "List.hpp"
 #include "common.hpp"
+#include <stddef.h>
 
 struct RawFrame {
     u8 * pixels;
@@ -14,7 +15,7 @@ struct DebugTimers {
 };
 
 struct PixelFormat {
-	int ridx, gidx, bidx, stride;
+	ptrdiff_t ridx, gidx, bidx, stride;
 };
 
 DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds,

@@ -3,36 +3,32 @@
 //TODO: figure out why they aren't faster
 
 //threading TODOS:
-//- use atomic builtins for compression threads
+//- multithread frame cooking
+//- reimplement synchronization using condition variables
+//- allow user to specify preferred thread count at runtime
 //- dynamically determine physical/logical core count
-//- multithread frame cooking using atomic builtins
 //- make threading code work on win/MSVC as well
 //- put threading code behind preprocessor option
-//- allow user to specify preferred thread count at runtime
 
 #include "giff.hpp"
 #include "common.hpp"
 #include "FileBuffer.hpp"
 
 #include <pthread.h>
+#include <emmintrin.h>
 
 #ifdef _MSC_VER
-    #include <intrin.h>
-
-    int bit_count(int i) {
+    int bit_log(int i) {
         unsigned long idx;
-        _BitScanReverse(&idx, i) + 1; //the knockoff MSVC version of this macros sucks hard, man
-        return idx; //why couldn't they just support the standard one?
+        _BitScanReverse(&idx, i) + 1;
+        return idx;
     }
 #else
-    #include <x86intrin.h>
-
-    //TODO: replace this with a builtin on clang and gcc,
-    //      and a generic version with de bruijn multiplication
-    int bit_count(int i) {
-        // return _bit_scan_reverse(i) + 1;
+    //TODO: only use this version on clang and gcc,
+    int bit_log(int i) {
         return 32 - __builtin_clz(i);
     }
+    //TODO: add a generic version of bit_log() using de bruijn multiplication
 #endif
 
 //forward declaration
@@ -93,7 +89,8 @@ bool simd_friendly(PixelFormat f) {
 }
 
 void cook_frame(RawFrame raw, u32 * cooked, int width, int height,
-                int rbits, int gbits, int bbits, PixelFormat format) {
+                int rbits, int gbits, int bbits, PixelFormat format)
+{
     if (simd_friendly(format)) {
         int rshift = format.ridx * 8 + 8 - rbits;
         int gshift = format.gidx * 8 + 8 - gbits;
@@ -103,6 +100,10 @@ void cook_frame(RawFrame raw, u32 * cooked, int width, int height,
         __m128i bmask = _mm_set1_epi32((1 << bbits) - 1);
         for (int y = 0; y < height; ++y) {
             int x = 0;
+            //NOTE: If we could guarantee the channels are in the right byte order (R,G,B)
+            //      then we could get away with masking first and only doing 3 right-shifts.
+            //      This is relevant because we might be getting hamstrung by the fact that we can
+            //      only issue one vector shift instruction per cycle.
             for (; x < width - 3; x += 4) {
                 u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
                 u32 * c = &cooked[y * width + x];
@@ -123,35 +124,6 @@ void cook_frame(RawFrame raw, u32 * cooked, int width, int height,
                                         p[format.ridx] >> (8 - rbits);
             }
         }
-
-        // int rshift = format.ridx * 8 + 8 - rbits;
-        // int gshift = format.gidx * 8 + 8 - gbits;
-        // int bshift = format.bidx * 8 + 8 - bbits;
-        // __m256i rmask = _mm256_set1_epi32((1 << rbits) - 1);
-        // __m256i gmask = _mm256_set1_epi32((1 << gbits) - 1);
-        // __m256i bmask = _mm256_set1_epi32((1 << bbits) - 1);
-        // for (int y = 0; y < height; ++y) {
-        //     int x = 0;
-        //     for (; x < width - 7; x += 8) {
-        //         u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
-        //         u32 * c = &cooked[y * width + x];
-        //         __m256i in = _mm256_loadu_si256((__m256i *) p);
-        //         __m256i r = _mm256_and_si256(_mm256_srli_epi32(in, rshift), rmask);
-        //         __m256i g = _mm256_and_si256(_mm256_srli_epi32(in, gshift), gmask);
-        //         __m256i b = _mm256_and_si256(_mm256_srli_epi32(in, bshift), bmask);
-        //         g = _mm256_slli_epi32(g, rbits);
-        //         b = _mm256_slli_epi32(b, rbits + gbits);
-        //         __m256i out = _mm256_or_si256(r, _mm256_or_si256(g, b));
-        //         _mm256_storeu_si256((__m256i *) c, out);
-        //     }
-
-        //     for (; x < width; ++x) {
-        //         u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
-        //         cooked[y * width + x] = p[format.bidx] >> (8 - bbits) << (rbits + gbits) |
-        //                                 p[format.gidx] >> (8 - gbits) <<  rbits          |
-        //                                 p[format.ridx] >> (8 - rbits);
-        //     }
-        // }
     } else {
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
@@ -165,7 +137,8 @@ void cook_frame(RawFrame raw, u32 * cooked, int width, int height,
 }
 
 void cook_frame_dithered(RawFrame raw, u32 * cooked, int width, int height,
-                         int rbits, int gbits, int bbits, PixelFormat format) {
+                         int rbits, int gbits, int bbits, PixelFormat format)
+{
     int ditherKernel[8 * 8] = {
          0, 48, 12, 60,  3, 51, 15, 63,
         32, 16, 44, 28, 35, 19, 47, 31,
@@ -222,42 +195,6 @@ void cook_frame_dithered(RawFrame raw, u32 * cooked, int width, int height,
                     min(255, p[format.ridx] + (k >> (rbits - 2))) >> (8 - rbits);
             }
         }
-
-        // int rshift = format.ridx * 8 + 8 - rbits;
-        // int gshift = format.gidx * 8 + 8 - gbits;
-        // int bshift = format.bidx * 8 + 8 - bbits;
-        // __m256i rmask = _mm256_set1_epi32((1 << rbits) - 1);
-        // __m256i gmask = _mm256_set1_epi32((1 << gbits) - 1);
-        // __m256i bmask = _mm256_set1_epi32((1 << bbits) - 1);
-        // for (int y = 0; y < height; ++y) {
-        //     __m256i k = _mm256_loadu_si256((__m256i *) &derivedKernel[(y & 7) * 8]);
-
-        //     int x = 0;
-        //     for (; x < width - 7; x += 8) {
-        //         u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
-        //         u32 * c = &cooked[y * width + x];
-
-        //         __m256i in = _mm256_loadu_si256((__m256i *) p);
-        //         in = _mm256_adds_epu8(in, k);
-        //         __m256i r = _mm256_and_si256(_mm256_srli_epi32(in, rshift), rmask);
-        //         __m256i g = _mm256_and_si256(_mm256_srli_epi32(in, gshift), gmask);
-        //         __m256i b = _mm256_and_si256(_mm256_srli_epi32(in, bshift), bmask);
-        //         g = _mm256_slli_epi32(g, rbits);
-        //         b = _mm256_slli_epi32(b, rbits + gbits);
-        //         __m256i out = _mm256_or_si256(r, _mm256_or_si256(g, b));
-        //         _mm256_storeu_si256((__m256i *) c, out);
-        //     }
-
-        //     for (; x < width; ++x) {
-        //         u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
-        //         int dx = x & 7, dy = y & 7;
-        //         int k = ditherKernel[dy * 8 + dx];
-        //         cooked[y * width + x] =
-        //             min(255, p[format.bidx] + (k >> (bbits - 2))) >> (8 - bbits) << (rbits + gbits) |
-        //             min(255, p[format.gidx] + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits          |
-        //             min(255, p[format.ridx] + (k >> (rbits - 2))) >> (8 - rbits);
-        //     }
-        // }
     } else {
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
@@ -273,14 +210,212 @@ void cook_frame_dithered(RawFrame raw, u32 * cooked, int width, int height,
     }
 }
 
+struct CompressionData {
+    int width, height, centiSeconds;
+    int frameIdx;
+    MetaPaletteInfo meta;
+    List<u32 *> cookedFrames;
+    List<FileBuffer> compressedFrames;
+    // pthread_mutex_t mutex;
+};
+
+void * compress_frames(CompressionData * data) {
+    MetaPaletteInfo meta = data->meta;
+    int width = data->width, height = data->height, centiSeconds = data->centiSeconds;
+    // StridedList lzw = { (i16 *) malloc(4096 * (meta.maxUsed + 1) * sizeof(i16)) };
+    StridedList lzw = { (i16 *) malloc(4096 * 256 * sizeof(i16)) };
+    u8 idxBuffer[4096];
+    int idxLen = 0;
+
+    while (true) {
+        // pthread_mutex_lock(&data->mutex);
+        // if (data->frameIdx >= (int) data->cookedFrames.len) {
+        //     pthread_mutex_unlock(&data->mutex);
+        //     free(lzw.data);
+        //     return nullptr;
+        // }
+        // int frameIdx = data->frameIdx;
+        // ++data->frameIdx;
+        // pthread_mutex_unlock(&data->mutex);
+
+        int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
+        if (frameIdx >= (int) data->cookedFrames.len) {
+            free(lzw.data);
+            return nullptr;
+        }
+
+        u32 * pframe = data->cookedFrames[frameIdx - 1];
+        u32 * cframe = data->cookedFrames[frameIdx];
+        FileBuffer buf = create_file_buffer(1024);
+
+        //allocate tlb
+        int totalBits = meta.rbits + meta.gbits + meta.bbits;
+        int tlbSize = 1 << totalBits;
+        u8 * tlb = (u8 *) malloc(tlbSize * sizeof(u8));
+
+        //generate palette
+        struct Color3 { u8 r, g, b; };
+        Color3 table[256] = {};
+        int tableIdx = 1; //we start counting at 1 because 0 is the transparent color
+        for (int i = 0; i < tlbSize; ++i) {
+            if (meta.used[frameIdx - 1][i]) {
+                tlb[i] = tableIdx;
+                int rmask = (1 << meta.rbits) - 1;
+                int gmask = (1 << meta.gbits) - 1;
+                //isolate components
+                int r = i & rmask;
+                int g = i >> meta.rbits & gmask;
+                int b = i >> (meta.rbits + meta.gbits);
+                //shift into highest bits
+                r <<= 8 - meta.rbits;
+                g <<= 8 - meta.gbits;
+                b <<= 8 - meta.bbits;
+                table[tableIdx] = {
+                    (u8)(r | r >> meta.rbits),
+                    (u8)(g | g >> meta.gbits),
+                    (u8)(b | b >> meta.bbits),
+                };
+                ++tableIdx;
+            }
+        }
+
+        free(meta.used[frameIdx - 1]);
+        // printf("frame %d uses %d colors\n", j, tableIdx);
+
+        int tableBits = bit_log(tableIdx - 1);
+        int tableSize = 1 << tableBits;
+        // printf("idx: %d bits: %d size: %d\n\n", tableIdx, tableBits, tableSize);
+
+        buf.check(8 + 10);
+        //graphics control extension
+        buf.write_unsafe<u8>(0x21); //extension introducer
+        buf.write_unsafe<u8>(0xF9); //extension identifier
+        buf.write_unsafe<u8>(4); //block size (always 4)
+        //reserved, disposal method:keep, input flag, transparency flag
+        //NOTE: MSVC incorrectly generates warning C4806 here due to a compiler bug.
+        // buf.write_unsafe<u8>(0b000'001'0'0 | (j != 1));
+        buf.write_unsafe<u8>(0b00000100 | (frameIdx != 1));
+        buf.write_unsafe<u16>(centiSeconds); //x/100 seconds per frame
+        buf.write_unsafe<u8>(0); //transparent color index
+        buf.write_unsafe<u8>(0); //block terminator
+
+        //image descriptor
+        buf.write_unsafe<u8>(0x2C); //image separator
+        buf.write_unsafe<u16>(0); //image left
+        buf.write_unsafe<u16>(0); //image top
+        buf.write_unsafe<u16>(width);
+        buf.write_unsafe<u16>(height);
+        //local color table flag, interlace flag, sort flag, reserved, local color table size
+        // buf.write_unsafe<u8>(0b1'0'0'00'000 | (tableBits - 1));
+        buf.write_unsafe<u8>(0b10000000 | (tableBits - 1));
+
+        //local color table
+        buf.write_block(table, tableSize);
+
+        //image data
+        BlockBuffer block = {};
+        buf.write<u8>(tableBits); //lzw minimum code size
+        reset(&lzw, tableSize, tableIdx);
+        //XXX: do we actually need to write this?
+        put_code(&buf, &block, bit_log(lzw.len - 1), tableSize); //clear code
+
+        int lastCode = cframe[0] == pframe[0]? 0 : tlb[cframe[0]];
+        for (int i : range(1, width * height)) {
+            idxBuffer[idxLen++] = cframe[i] == pframe[i]? 0 : tlb[cframe[i]];
+            int code = lzw[lastCode][idxBuffer[idxLen - 1]];
+            if (code < 0) {
+                //write to code stream
+                int codeBits = bit_log(lzw.len - 1);
+                put_code(&buf, &block, codeBits, lastCode);
+                // printf("%d-%d-%d  ", lastCode, codeBits, (int) lzw.len);
+
+                //NOTE: [I THINK] we need to leave room for 2 more codes (leftover and end code)
+                //      because we don't ever reset the table after writing the leftover bits
+                //XXX: is my thinking correct on this one?
+                if (lzw.len > 4094) {
+                    //reset buffer code table
+                    put_code(&buf, &block, codeBits, tableSize);
+                    reset(&lzw, tableSize, tableIdx);
+                } else {
+                    lzw[lastCode][idxBuffer[idxLen - 1]] = lzw.len;
+                    ++lzw.len;
+                }
+
+                //reset index buffer
+                idxBuffer[0] = idxBuffer[idxLen - 1];
+                idxLen = 1;
+
+                lastCode = idxBuffer[0];
+            } else {
+                lastCode = code;
+            }
+        }
+
+        free(tlb);
+
+        //write code for leftover index buffer contents, then the end code
+        put_code(&buf, &block, bit_log(lzw.len - 1), lastCode);
+        put_code(&buf, &block, bit_log(lzw.len), tableSize + 1); //end code
+
+        //flush remaining data
+        if (block.bits) {
+            int bytes = (block.bits + 7) / 8; //round up
+            buf.check(bytes + 1);
+            buf.write_unsafe<u8>(bytes);
+            buf.write_block_unsafe(block.bytes, bytes);
+        }
+
+        buf.write<u8>(0); //terminating block
+        idxLen = 0; //reset encoding state
+
+        data->compressedFrames[frameIdx - 1] = buf;
+    }
+}
+
+struct ThreadData {
+    // pthread_mutex_t mutex;
+    // pthread_cond_t condition;
+    pthread_t parent;
+    bool compress;
+    bool dither;
+    int retired;
+    int activeThreads;
+    CompressionData compressionData;
+};
+
+#include <signal.h>
+
+void * wait_for_work(void * arg) {
+    ThreadData * data = (ThreadData *) arg;
+    sigset_t set;
+    sigemptyset(&set);
+    sigaddset(&set, SIGUSR1);
+    sigaddset(&set, SIGUSR2);
+
+    while (true) {
+        int sig;
+        sigwait(&set, &sig);
+        if (sig == SIGUSR1) {
+            //TODO
+        } else if (sig == SIGUSR2) {
+            compress_frames(&data->compressionData);
+            return nullptr;
+        }
+    }
+}
+
+static const int batchSize = 32;
+
 MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *> cookedFrames,
                                     int width, int height, bool dither, PixelFormat format,
-                                    DebugTimers & timers) {
+                                    pthread_t * threads, int threadCount, DebugTimers & timers)
+{
     bool * * used = (bool * *) malloc(rawFrames.len * sizeof(bool *));
     //set to null so we can spuriously free() with no effect
     memset(used, 0, rawFrames.len * sizeof(bool *));
 
     //bit depth for each channel
+    //TODO: generate these programmatically so we can get rid of the arrays
     int rbits[9] = { 5, 5, 4, 4, 4, 3, 3, 3, 2 };
     int gbits[9] = { 5, 5, 5, 4, 4, 4, 3, 3, 3 };
     int bbits[9] = { 5, 4, 4, 4, 3, 3, 3, 2, 2 };
@@ -334,173 +469,26 @@ MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *> cooked
     return { used, rbits[minPalette], gbits[minPalette], bbits[minPalette] };
 }
 
-struct CompressionData {
-    int width, height, centiSeconds;
-    int frameIdx;
-    MetaPaletteInfo meta;
-    List<u32 *> cookedFrames;
-    List<FileBuffer> compressedFrames;
-    pthread_mutex_t mutex;
-};
-
-void * compress_frames(void * dataArg) {
-    CompressionData * data = (CompressionData *) dataArg;
-    // StridedList lzw = { (i16 *) malloc(4096 * (meta.maxUsed + 1) * sizeof(i16)) };
-    StridedList lzw = { (i16 *) malloc(4096 * 256 * sizeof(i16)) };
-    List<u8> idxBuffer = create_list<u8>(200);
-
-    while (true) {
-        pthread_mutex_lock(&data->mutex);
-        if (data->frameIdx >= (int) data->cookedFrames.len) {
-            pthread_mutex_unlock(&data->mutex);
-            free(lzw.data);
-            idxBuffer.finalize();
-            return nullptr;
-        }
-        int frameIdx = data->frameIdx;
-        ++data->frameIdx;
-        pthread_mutex_unlock(&data->mutex);
-
-        u32 * pframe = data->cookedFrames[frameIdx - 1];
-        u32 * cframe = data->cookedFrames[frameIdx];
-        MetaPaletteInfo meta = data->meta;
-        int width = data->width, height = data->height, centiSeconds = data->centiSeconds;
-        FileBuffer buf = {}; //TODO: pre-allocate a reasonable amount
-
-        // float prePalette = get_time();
-        //allocate tlb
-        int totalBits = meta.rbits + meta.gbits + meta.bbits;
-        int tlbSize = 1 << totalBits;
-        u8 * tlb = (u8 *) malloc(tlbSize * sizeof(u8));
-
-        //generate palette
-        struct Color3 { u8 r, g, b; };
-        Color3 table[256] = {};
-        int tableIdx = 1; //we start counting at 1 because 0 is the transparent color
-        for (int i = 0; i < tlbSize; ++i) {
-            if (meta.used[frameIdx - 1][i]) {
-                tlb[i] = tableIdx;
-                int rmask = (1 << meta.rbits) - 1;
-                int gmask = (1 << meta.gbits) - 1;
-                //isolate components
-                int r = i & rmask;
-                int g = i >> meta.rbits & gmask;
-                int b = i >> (meta.rbits + meta.gbits);
-                //shift into highest bits
-                r <<= 8 - meta.rbits;
-                g <<= 8 - meta.gbits;
-                b <<= 8 - meta.bbits;
-                table[tableIdx] = {
-                    (u8)(r | r >> meta.rbits),
-                    (u8)(g | g >> meta.gbits),
-                    (u8)(b | b >> meta.bbits),
-                };
-                ++tableIdx;
-            }
-        }
-        // printf("frame %d uses %d colors\n", j, tableIdx);
-        // timers.palette += get_time() - prePalette;
-
-        int tableBits = bit_count(tableIdx - 1);
-        int tableSize = 1 << tableBits;
-        // printf("idx: %d bits: %d size: %d\n\n", tableIdx, tableBits, tableSize);
-
-        buf.check(8 + 10);
-        //graphics control extension
-        buf.write_unsafe<u8>(0x21); //extension introducer
-        buf.write_unsafe<u8>(0xF9); //extension identifier
-        buf.write_unsafe<u8>(4); //block size (always 4)
-        //reserved, disposal method:keep, input flag, transparency flag
-        //NOTE: MSVC incorrectly generates warning C4806 here due to a compiler bug.
-        // buf.write_unsafe<u8>(0b000'001'0'0 | (j != 1));
-        buf.write_unsafe<u8>(0b00000100 | (frameIdx != 1));
-        buf.write_unsafe<u16>(centiSeconds); //x/100 seconds per frame
-        buf.write_unsafe<u8>(0); //transparent color index
-        buf.write_unsafe<u8>(0); //block terminator
-
-        //image descriptor
-        buf.write_unsafe<u8>(0x2C); //image separator
-        buf.write_unsafe<u16>(0); //image left
-        buf.write_unsafe<u16>(0); //image top
-        buf.write_unsafe<u16>(width);
-        buf.write_unsafe<u16>(height);
-        //local color table flag, interlace flag, sort flag, reserved, local color table size
-        // buf.write_unsafe<u8>(0b1'0'0'00'000 | (tableBits - 1));
-        buf.write_unsafe<u8>(0b10000000 | (tableBits - 1));
-
-        //local color table
-        buf.write_block(table, tableSize);
-
-        //image data
-        BlockBuffer block = {};
-        buf.write<u8>(tableBits); //lzw minimum code size
-        reset(&lzw, tableSize, tableIdx);
-        //XXX: do we actually need to write this?
-        put_code(&buf, &block, bit_count(lzw.len - 1), tableSize); //clear code
-
-        // float preInner = get_time();
-        int lastCode = cframe[0] == pframe[0]? 0 : tlb[cframe[0]];
-        for (int i : range(1, width * height)) {
-            idxBuffer.add(cframe[i] == pframe[i]? 0 : tlb[cframe[i]]);
-            int code = lzw[lastCode][idxBuffer[idxBuffer.len - 1]];
-            if (code < 0) {
-                //write to code stream
-                int codeBits = bit_count(lzw.len - 1);
-                put_code(&buf, &block, codeBits, lastCode);
-                // printf("%d-%d-%d  ", lastCode, codeBits, (int) lzw.len);
-
-                //NOTE: [I THINK] we need to leave room for 2 more codes (leftover and end code)
-                //      because we don't ever reset the table after writing the leftover bits
-                //XXX: is my thinking correct on this one?
-                if (lzw.len > 4094) {
-                    //reset buffer code table
-                    put_code(&buf, &block, codeBits, tableSize);
-                    reset(&lzw, tableSize, tableIdx);
-                } else {
-                    lzw[lastCode][idxBuffer[idxBuffer.len - 1]] = lzw.len;
-                    ++lzw.len;
-                }
-
-                //reset index buffer
-                idxBuffer[0] = idxBuffer[idxBuffer.len - 1];
-                idxBuffer.len = 1;
-
-                lastCode = idxBuffer[0];
-            } else {
-                lastCode = code;
-            }
-
-            //DEBUG
-            // if (idxBuffer.len > largestIdxBuffer)
-            //     largestIdxBuffer = idxBuffer.len;
-        }
-        // timers.inner += get_time() - preInner;
-
-        //write code for leftover index buffer contents, then the end code
-        put_code(&buf, &block, bit_count(lzw.len - 1), lastCode);
-        put_code(&buf, &block, bit_count(lzw.len), tableSize + 1); //end code
-
-        //flush remaining data
-        if (block.bits) {
-            int bytes = (block.bits + 7) / 8; //round up
-            buf.check(bytes + 1);
-            buf.write_unsafe<u8>(bytes);
-            buf.write_block_unsafe(block.bytes, bytes);
-        }
-
-        buf.write<u8>(0); //terminating block
-        idxBuffer.len = 0; //reset encoding state
-
-        data->compressedFrames[frameIdx - 1] = buf;
-    }
-}
-
 DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds,
-                     const char * path, bool dither, PixelFormat format) {
+                     const char * path, bool dither, PixelFormat format)
+{
     DebugTimers timers = {};
 
     float preAmble, preTotal;
     preAmble = preTotal = get_time();
+    //create worker threads for later use
+    ThreadData data = { pthread_self() };
+    int threadCount = 7;
+    pthread_t threads[7];
+    pthread_attr_t attr;
+    //ensure that threads will be joinable (this is not guaranteed to be a default setting)
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+    for (int i = 0; i < threadCount; ++i) {
+        pthread_create(&threads[i], &attr, wait_for_work, &data);
+    }
+    pthread_attr_destroy(&attr);
+
     //allocate space for cooked frames
     List<u32 *> cookedFrames = create_list<u32 *>(rawFrames.len + 1);
     u32 * cookedMemBlock = (u32 *) malloc((rawFrames.len + 1) * width * height * sizeof(u32));
@@ -513,7 +501,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
     float preChoice = get_time();
     MetaPaletteInfo meta = choose_meta_palette(
-        rawFrames, cookedFrames, width, height, dither, format, timers);
+        rawFrames, cookedFrames, width, height, dither, format, threads, threadCount, timers);
     timers.choice = get_time() - preChoice;
     printf("bits: %d, %d, %d\n", meta.rbits, meta.gbits, meta.bbits);
     timers.amble = get_time() - preAmble;
@@ -521,6 +509,15 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
 
     float preCompress = get_time();
+    data.compressionData = { width, height, centiSeconds, 1, meta, cookedFrames,
+                             create_list<FileBuffer>(cookedFrames.len - 1) };
+    data.compressionData.compressedFrames.len = data.compressionData.compressedFrames.max;
+    // pthread_mutex_init(&data.mutex, nullptr);
+
+    for (int i = 0; i < threadCount; ++i) {
+        pthread_kill(threads[i], SIGUSR2);
+    }
+
     //header
     FileBuffer buf = create_file_buffer(2048);
     for (char c : range("GIF89a")) {
@@ -548,28 +545,16 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     buf.write_unsafe<u16>(0); //loop forever
     buf.write_unsafe<u8>(0); //block terminator
 
-    CompressionData data = { width, height, centiSeconds, 1, meta, cookedFrames,
-                             create_list<FileBuffer>(cookedFrames.len - 1) };
-    data.compressedFrames.len = data.compressedFrames.max;
-    pthread_mutex_init(&data.mutex, nullptr);
+    compress_frames(&data.compressionData);
 
-    printf("sizeof pthread, mutex: %lu, %lu\n", sizeof(pthread_t), sizeof(pthread_mutex_t));
-    int threadCount = 8;
-    pthread_t threads[8];
-    //ensure that threads will be joinable (this is not guaranteed to be a default setting)
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-    for (int i = 0; i < threadCount; ++i) {
-        pthread_create(&threads[i], nullptr, compress_frames, &data);
-    }
-
+    //wait for threads to finish and round up results
     for (int i = 0; i < threadCount; ++i) {
         pthread_join(threads[i], nullptr);
     }
 
-    for (FileBuffer b : data.compressedFrames) {
+    for (FileBuffer b : data.compressionData.compressedFrames) {
         buf.write_block(b.block, b.size());
+        b.finalize();
     }
 
     buf.write<u8>(0x3B); //trailing marker
@@ -586,11 +571,10 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
     //cleanup
     buf.finalize();
-    // free(lzw.data);
-    // idxBuffer.finalize();
     free(cookedMemBlock);
     cookedFrames.finalize();
     free(meta.used);
+    data.compressionData.compressedFrames.finalize();
 
     timers.total = get_time() - preTotal;
     return timers;
