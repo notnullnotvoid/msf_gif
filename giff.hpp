@@ -19,7 +19,7 @@ struct PixelFormat {
 };
 
 DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds,
-					 const char * path, bool dither, PixelFormat format);
+					 const char * path, bool dither, PixelFormat format, int threadCount);
 
 #define GIFF_FORMAT_RGBA { 0, 1, 2, 4 }
 #define GIFF_FORMAT_BGRA { 2, 1, 0, 4 }

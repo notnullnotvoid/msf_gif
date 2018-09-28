@@ -42,9 +42,9 @@ TODO:
 
 ! SSE optimization
 ! AVX optimization
-- multithreading
+! multithreading
 
-- runtime options for thread count
+! runtime options for thread count
 - add runtime option for channel importance order?
 - add runtime option for maximum bit depth?
 - add test cases for smaller and larger GIFs?

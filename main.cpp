@@ -1,9 +1,9 @@
+#include "giff.hpp"
+#include "List.hpp"
+#include "common.hpp"
+
 #include <stdio.h>
 #include <SDL2/SDL.h>
-
-#include "common.hpp"
-#include "List.hpp"
-#include "giff.hpp"
 
 u64 applicationStartupTimeValue;
 
@@ -55,11 +55,15 @@ int main() {
         List<RawFrame> frames = {};
         for (int j : range(blob->frames)) {
             frames.add({ (u8 *) &blob->pixels[blob->width * blob->height * j], blob->width * 4 });
+            for (int k : range(blob->width * blob->height)) {
+                u8 * p = (u8 *) &blob->pixels[blob->width * blob->height * j + k];
+                swap(p[0], p[2]);
+            }
         }
         char * path = cat("out/", cat(names.begin()[i], ".gif"));
         printf("\nwriting %s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
             path, blob->width, blob->height, blob->frames, blob->centiSeconds);
-        timers.add(save_gif(blob->width, blob->height, frames, blob->centiSeconds, path, false, GIFF_FORMAT_BGRA));
+        timers.add(save_gif(blob->width, blob->height, frames, blob->centiSeconds, path, true, GIFF_FORMAT_RGBA, 8));
         printf("\n");
         fflush(stdout);
     }
