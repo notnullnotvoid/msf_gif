@@ -54,5 +54,6 @@ TODO:
 - remove C++isms
 - make sure it compiles correctly on all targets (gcc + clang + msvc, 32 + 64 bit)
 - combine header and implementation
+- ensure it works on big-endian architectures? (is this important?)
 - asserts for invalid user parameters??
 - or maybe proper error handling???
