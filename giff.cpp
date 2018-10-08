@@ -1,19 +1,48 @@
 //NOTE: AVX2 doesn't appear to make the exporter any faster overall, so they're removed for now
 //TODO: figure out why they aren't faster
 
-//threading TODOS:
-//- reimplement synchronization using condition variables
-//- combine unnecessarily repeated variables and simplify code
-//- dynamically determine physical/logical core count
-//- make threading code work on win/MSVC as well
-//- put threading code behind preprocessor option
-
 #include "giff.hpp"
 #include "common.hpp"
 #include "FileBuffer.hpp"
 
 #include <pthread.h>
 #include <emmintrin.h>
+
+struct ThreadBarrier {
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    int flag, count, num;
+};
+
+void barrier_init(ThreadBarrier * bar, int num) {
+    *bar = {};
+    pthread_mutex_init(&bar->mutex, nullptr);
+    pthread_cond_init(&bar->cond, nullptr);
+    bar->num = num;
+}
+
+void barrier_wait(ThreadBarrier * bar) {
+    pthread_mutex_lock(&bar->mutex);
+    int flag = bar->flag;
+    // int count = __sync_fetch_and_add(bar->count, 1);
+    // if (count + 1 == bar->num) {
+    ++bar->count;
+    if (bar->count == bar->num) {
+        bar->count = 0;
+        bar->flag = !bar->flag;
+        pthread_cond_broadcast(&bar->cond);
+    } else {
+        while (bar->flag == flag) {
+            pthread_cond_wait(&bar->cond, &bar->mutex);
+        }
+    }
+    pthread_mutex_unlock(&bar->mutex);
+}
+
+void barrier_destroy(ThreadBarrier * bar) {
+    pthread_mutex_destroy(&bar->mutex);
+    pthread_cond_destroy(&bar->cond);
+}
 
 #ifdef _MSC_VER
     static int bit_log(int i) {
@@ -154,7 +183,7 @@ static void cook_frame_part(RawFrame raw, u32 * cooked, int width, int miny, int
 }
 
 static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int miny, int maxy,
-                         int rbits, int gbits, int bbits, PixelFormat format)
+                         int rbits, int gbits, int bbits, PixelFormat fmt)
 {
     int ditherKernel[8 * 8] = {
          0, 48, 12, 60,  3, 51, 15, 63,
@@ -167,26 +196,26 @@ static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int 
         42, 26, 38, 22, 41, 25, 37, 21,
     };
 
-    if (simd_friendly(format) && !(format.ridx == format.gidx || format.ridx == format.bidx)) {
+    if (simd_friendly(fmt) && !(fmt.ridx == fmt.gidx || fmt.ridx == fmt.bidx)) {
         //TODO: is the cost of deriving the dither kernel significant to performance?
         int derivedKernel[8 * 8];
         for (int i = 0; i < 8 * 8; ++i) {
             int k = ditherKernel[i];
-            derivedKernel[i] = k >> (rbits - 2) << format.ridx * 8 |
-                               k >> (gbits - 2) << format.gidx * 8 |
-                               k >> (bbits - 2) << format.bidx * 8;
+            derivedKernel[i] = k >> (rbits - 2) << fmt.ridx * 8 |
+                               k >> (gbits - 2) << fmt.gidx * 8 |
+                               k >> (bbits - 2) << fmt.bidx * 8;
         }
 
-        int rshift = format.ridx * 8 + 8 - rbits;
-        int gshift = format.gidx * 8 + 8 - gbits;
-        int bshift = format.bidx * 8 + 8 - bbits;
+        int rshift = fmt.ridx * 8 + 8 - rbits;
+        int gshift = fmt.gidx * 8 + 8 - gbits;
+        int bshift = fmt.bidx * 8 + 8 - bbits;
         __m128i rmask = _mm_set1_epi32((1 << rbits) - 1);
         __m128i gmask = _mm_set1_epi32((1 << gbits) - 1);
         __m128i bmask = _mm_set1_epi32((1 << bbits) - 1);
         for (int y = miny; y < maxy; ++y) {
             int x = 0;
             for (; x < width - 3; x += 4) {
-                u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+                u8 * p = &raw.pixels[y * raw.pitch + x * fmt.stride];
                 u32 * c = &cooked[y * width + x];
                 int dx = x & 7, dy = y & 7;
                 int * kp = &derivedKernel[dy * 8 + dx];
@@ -204,56 +233,48 @@ static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int 
             }
 
             for (; x < width; ++x) {
-                u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+                u8 * p = &raw.pixels[y * raw.pitch + x * fmt.stride];
                 int dx = x & 7, dy = y & 7;
                 int k = ditherKernel[dy * 8 + dx];
                 cooked[y * width + x] =
-                    min(255, p[format.bidx] + (k >> (bbits - 2))) >> (8 - bbits) << (rbits + gbits) |
-                    min(255, p[format.gidx] + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits          |
-                    min(255, p[format.ridx] + (k >> (rbits - 2))) >> (8 - rbits);
+                    min(255, p[fmt.bidx] + (k >> (bbits - 2))) >> (8 - bbits) << (rbits + gbits) |
+                    min(255, p[fmt.gidx] + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits          |
+                    min(255, p[fmt.ridx] + (k >> (rbits - 2))) >> (8 - rbits);
             }
         }
     } else {
         for (int y = miny; y < maxy; ++y) {
             for (int x = 0; x < width; ++x) {
-                u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+                u8 * p = &raw.pixels[y * raw.pitch + x * fmt.stride];
                 int dx = x & 7, dy = y & 7;
                 int k = ditherKernel[dy * 8 + dx];
                 cooked[y * width + x] =
-                    min(255, p[format.bidx] + (k >> (bbits - 2))) >> (8 - bbits) << (rbits + gbits) |
-                    min(255, p[format.gidx] + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits          |
-                    min(255, p[format.ridx] + (k >> (rbits - 2))) >> (8 - rbits);
+                    min(255, p[fmt.bidx] + (k >> (bbits - 2))) >> (8 - bbits) << (rbits + gbits) |
+                    min(255, p[fmt.gidx] + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits          |
+                    min(255, p[fmt.ridx] + (k >> (rbits - 2))) >> (8 - rbits);
             }
         }
     }
 }
 
-static const int pixelsPerBatch = 4096;
-
 struct CookData {
+    //constant
     int width, height;
+    PixelFormat format;
+    int totalThreads; //duplicated with info in barrier?
+    bool dither;
+
+    //changed sometimes
+    bool done;
+    ThreadBarrier barrier;
+
+    //filled out from scratch every frame
     RawFrame raw;
     u32 * cooked;
     int rbits, gbits, bbits;
-    int sharedLineCounter;
-    bool dither;
-    PixelFormat format;
+    // int sharedLineCounter;
+    int currentFrame; //DEBUG
 };
-
-static void cook_frame(CookData * data) {
-    int linesPerBatch = (pixelsPerBatch + data->width - 1) / data->width; //round up
-    while (true) {
-        int miny = __sync_fetch_and_add(&data->sharedLineCounter, linesPerBatch);
-        if (miny >= data->height) { return; }
-        int maxy = min(miny + linesPerBatch, data->height);
-        if (data->dither)
-            cook_frame_part_dithered(data->raw, data->cooked, data->width, miny, maxy,
-                                     data->rbits, data->gbits, data->bbits, data->format);
-        else
-            cook_frame_part(data->raw, data->cooked, data->width, miny, maxy,
-                            data->rbits, data->gbits, data->bbits, data->format);
-    }
-}
 
 struct CompressionData {
     int width, height, centiSeconds;
@@ -263,7 +284,7 @@ struct CompressionData {
     List<FileBuffer> compressedFrames;
 };
 
-struct ThreadData {
+struct ThreadGlobal {
     pthread_mutex_t mutex;
     pthread_cond_t condition;
     bool compress;
@@ -272,13 +293,66 @@ struct ThreadData {
     CompressionData compressionData;
 };
 
-int sync_waits = 0;
+struct CookLocal {
+    pthread_t thread;
+    int id;
+    CookData * global;
+};
+
+static void cook_frame(CookData * data, int id) {
+    //TODO: make sure this won't ever exclude the last line from computation
+    int miny =  id      * (data->height / (float) data->totalThreads);
+    int maxy = (id + 1) * (data->height / (float) data->totalThreads);
+
+    if (data->currentFrame == 0) {
+        printf("  thread %d    miny %3d   maxy %3d   raw %p   cooked %p\n",
+            id, miny, maxy, data->raw.pixels, data->cooked);
+        fflush(stdout);
+    }
+
+    if (data->dither)
+        cook_frame_part_dithered(data->raw, data->cooked, data->width, miny, maxy,
+                                 data->rbits, data->gbits, data->bbits, data->format);
+    else
+        cook_frame_part(data->raw, data->cooked, data->width, miny, maxy,
+                        data->rbits, data->gbits, data->bbits, data->format);
+}
+
+static void * cook_frames(void * arg) {
+    CookLocal * local = (CookLocal *) arg;
+    CookData * data = local->global;
+    while (!data->done) {
+        barrier_wait(&data->barrier);
+        cook_frame(data, local->id);
+        barrier_wait(&data->barrier);
+        barrier_wait(&data->barrier);
+    }
+    return nullptr;
+}
+
+static int sync_waits = 0;
 
 static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *> cookedFrames,
         int width, int height, bool dither, PixelFormat format,
-        pthread_t * threads, int threadCount, ThreadData * threadData,
-        DebugTimers & timers)
+        int threadCount, DebugTimers & timers)
 {
+    int pixelsPerBatch = 4096;
+    int linesPerBatch = (pixelsPerBatch + width - 1) / width; //round up
+    int maxCookThreads = max(1, height / linesPerBatch);
+    int poolSize = min(threadCount, maxCookThreads - 1);
+    printf("pixelsPerBatch %d   linesPerBatch %d   maxCookThreads %d   poolSize %d\n",
+        pixelsPerBatch, linesPerBatch, maxCookThreads, poolSize);
+
+    //spawn thread pool for cooking
+    CookData cookData = { width, height, format, poolSize + 1, dither };
+    barrier_init(&cookData.barrier, poolSize + 1);
+    CookLocal threads[poolSize];
+    for (int i = 0; i < poolSize; ++i) {
+        threads[i].id = i;
+        threads[i].global = &cookData;
+        pthread_create(&threads[i].thread, nullptr, cook_frames, &threads[i]);
+    }
+
     bool * * used = (bool * *) malloc(rawFrames.len * sizeof(bool *));
     //set to null so we can spuriously free() with no effect
     memset(used, 0, rawFrames.len * sizeof(bool *));
@@ -302,31 +376,38 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         free(used[i - 1]);
         used[i - 1] = (bool *) malloc(paletteSize * sizeof(bool));
 
+
         float preCook = get_time();
-        int linesPerBatch = (pixelsPerBatch + width - 1) / width; //round up
-        int totalBatches = (height + linesPerBatch - 1) / linesPerBatch; //round up
-        int maxThreads = min(threadCount + 1, totalBatches) - 1;
-        threadData->cookData = { width, height, rawFrames[i - 1], frame,
-                                 rbits[minPalette], gbits[minPalette], bbits[minPalette],
-                                 0, dither, format };
-        // printf("   frame %d\n", idx);
-        // fflush(stdout);
-        if (idx == 0) {
-            printf("lines per batch: %d   total batches: %d   threads used: %d\n",
-                    linesPerBatch, totalBatches, maxThreads);
-            fflush(stdout);
-        }
+        // int linesPerBatch = (pixelsPerBatch + width - 1) / width; //round up
+        // int totalBatches = (height + linesPerBatch - 1) / linesPerBatch; //round up
+        // int maxThreads = min(threadCount + 1, totalBatches) - 1;
+        // threadData->cookData = { width, height, rawFrames[i - 1], frame,
+        //                          rbits[minPalette], gbits[minPalette], bbits[minPalette],
+        //                          0, dither, cookThreads, idx, format };
+        cookData.raw = rawFrames[i - 1];
+        cookData.cooked = frame;
+        cookData.rbits = rbits[minPalette];
+        cookData.gbits = gbits[minPalette];
+        cookData.bbits = bbits[minPalette];
+        cookData.currentFrame = idx;
 
-        threadData->activeThreads = maxThreads;
-        pthread_cond_broadcast(&threadData->condition);
-        cook_frame(&threadData->cookData);
+        // __sync_synchronize();
+        // threadData->activeThreads = cookThreads - 1;
+        // __sync_synchronize();
+        // pthread_cond_broadcast(&threadData->condition);
+        // __sync_synchronize();
+        // cook_frame(&threadData->cookData, cookThreads - 1, threadData->activeThreads);
 
-        //wait until all threads have finished before we continue
-        //TODO: start summing as soon as the first batch finishes and wait at each batch boundary?
-        while (threadData->activeThreads > 0) {
-            ++sync_waits;
-            __sync_synchronize();
-        }
+        // //wait until all threads have finished before we continue
+        // while (threadData->activeThreads > 0) {
+        //     ++sync_waits;
+        //     __sync_synchronize();
+        // }
+
+        barrier_wait(&cookData.barrier);
+        cook_frame(&cookData, poolSize);
+        barrier_wait(&cookData.barrier);
+
         timers.cook += get_time() - preCook;
 
         //mark down which colors are used out of the full 15-bit palette
@@ -348,7 +429,16 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
             ++minPalette;
             minCorrect = idx;
         }
+
+        //TODO: de-dupe this condition?
+        if (!(idx < minCorrect + (int) cookedFrames.len - 1)) {
+            cookData.done = true;
+        }
+        barrier_wait(&cookData.barrier);
     }
+
+    // //TODO: join all threads? do we need to?
+    // barrier_destroy(&cookData.barrier);
 
     return { used, rbits[minPalette], gbits[minPalette], bbits[minPalette] };
 }
@@ -497,7 +587,7 @@ static void * compress_frames(CompressionData * data) {
 }
 
 static void * wait_for_work(void * arg) {
-    ThreadData * data = (ThreadData *) arg;
+    ThreadGlobal * data = (ThreadGlobal *) arg;
     while (true) {
         //XXX: could these threads be spinning through this outer loop while other threads are
         //     waiting to complete?
@@ -511,7 +601,7 @@ static void * wait_for_work(void * arg) {
             compress_frames(&data->compressionData);
             return nullptr;
         } else {
-            cook_frame(&data->cookData);
+            // cook_frame(&data->cookData, local->id, data->activeThreads);
         }
 
         int dummy = __sync_fetch_and_add(&data->activeThreads, -1);
@@ -521,13 +611,20 @@ static void * wait_for_work(void * arg) {
 }
 
 //TODO:
+//have cooking and compression use their own separate thread pools, for simplicity?
+//use thread barriers for synchronization instead of condition variables
 //create only as many threads as needed
-//use condition variable so were' not hammering on threadData->activeThreads from the main thread
-//figure out why we're not getting good speed-up with more threads?
-//try waking threads one after the other to possibly create less mutex contention?
-//start working on the serial part on the main thread while other threads are finishing up?
-
-//MAYBE: try just portioning the work evenly between threads so we need no synchronization at all?
+//multithread color binning
+//multithread color counting
+//SIMD-ize color counting
+//write thread barrier spinlock routines
+//test performance using mutex vs. spinlock for thread barrier?
+//use VLAs or alloca() wherever reasonable
+//allow specifying different thread counts for cooking and compression?
+//combine unnecessarily repeated variables and simplify code
+//dynamically determine physical/logical core count
+//make threading code work on win/MSVC as well
+//put threading code behind preprocessor option
 
 DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds,
                      const char * path, bool dither, PixelFormat format, int threadCount)
@@ -539,11 +636,11 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
     //TODO: spawn only as many threads as we actually need
     //create worker threads for later use
-    ThreadData threadData = {};
+    ThreadGlobal threadData = {};
     pthread_mutex_init(&threadData.mutex, nullptr);
     pthread_cond_init(&threadData.condition, nullptr);
-    threadCount = min(63, threadCount - 1);
-    pthread_t threads[63];
+    threadCount -= 1;
+    pthread_t threads[threadCount];
     pthread_attr_t attr;
 
     //ensure that threads will be joinable (this is not guaranteed to be a default setting)
@@ -566,8 +663,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
     float preChoice = get_time();
     MetaPaletteInfo meta = choose_meta_palette(
-        rawFrames, cookedFrames, width, height, dither, format,
-        threads, threadCount, &threadData, timers);
+        rawFrames, cookedFrames, width, height, dither, format, threadCount, timers);
     timers.choice = get_time() - preChoice;
     printf("bits: %d, %d, %d\n", meta.rbits, meta.gbits, meta.bbits);
     timers.amble = get_time() - preAmble;
