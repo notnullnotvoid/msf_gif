@@ -272,25 +272,7 @@ struct CookData {
     RawFrame raw;
     u32 * cooked;
     int rbits, gbits, bbits;
-    // int sharedLineCounter;
     int currentFrame; //DEBUG
-};
-
-struct CompressionData {
-    int width, height, centiSeconds;
-    int frameIdx;
-    MetaPaletteInfo meta;
-    List<u32 *> cookedFrames;
-    List<FileBuffer> compressedFrames;
-};
-
-struct ThreadGlobal {
-    pthread_mutex_t mutex;
-    pthread_cond_t condition;
-    bool compress;
-    int activeThreads;
-    CookData cookData;
-    CompressionData compressionData;
 };
 
 struct CookLocal {
@@ -299,6 +281,7 @@ struct CookLocal {
     CookData * global;
 };
 
+//TODO: inline this into cook_frames
 static void cook_frame(CookData * data, int id) {
     //TODO: make sure this won't ever exclude the last line from computation
     int miny =  id      * (data->height / (float) data->totalThreads);
@@ -330,16 +313,14 @@ static void * cook_frames(void * arg) {
     return nullptr;
 }
 
-static int sync_waits = 0;
-
 static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *> cookedFrames,
         int width, int height, bool dither, PixelFormat format,
         int threadCount, DebugTimers & timers)
 {
-    int pixelsPerBatch = 4096;
+    int pixelsPerBatch = 4096 * 8;
     int linesPerBatch = (pixelsPerBatch + width - 1) / width; //round up
     int maxCookThreads = max(1, height / linesPerBatch);
-    int poolSize = min(threadCount, maxCookThreads - 1);
+    int poolSize = min(threadCount - 1, maxCookThreads - 1);
     printf("pixelsPerBatch %d   linesPerBatch %d   maxCookThreads %d   poolSize %d\n",
         pixelsPerBatch, linesPerBatch, maxCookThreads, poolSize);
 
@@ -378,31 +359,12 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
 
 
         float preCook = get_time();
-        // int linesPerBatch = (pixelsPerBatch + width - 1) / width; //round up
-        // int totalBatches = (height + linesPerBatch - 1) / linesPerBatch; //round up
-        // int maxThreads = min(threadCount + 1, totalBatches) - 1;
-        // threadData->cookData = { width, height, rawFrames[i - 1], frame,
-        //                          rbits[minPalette], gbits[minPalette], bbits[minPalette],
-        //                          0, dither, cookThreads, idx, format };
         cookData.raw = rawFrames[i - 1];
         cookData.cooked = frame;
         cookData.rbits = rbits[minPalette];
         cookData.gbits = gbits[minPalette];
         cookData.bbits = bbits[minPalette];
         cookData.currentFrame = idx;
-
-        // __sync_synchronize();
-        // threadData->activeThreads = cookThreads - 1;
-        // __sync_synchronize();
-        // pthread_cond_broadcast(&threadData->condition);
-        // __sync_synchronize();
-        // cook_frame(&threadData->cookData, cookThreads - 1, threadData->activeThreads);
-
-        // //wait until all threads have finished before we continue
-        // while (threadData->activeThreads > 0) {
-        //     ++sync_waits;
-        //     __sync_synchronize();
-        // }
 
         barrier_wait(&cookData.barrier);
         cook_frame(&cookData, poolSize);
@@ -437,13 +399,27 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         barrier_wait(&cookData.barrier);
     }
 
-    // //TODO: join all threads? do we need to?
-    // barrier_destroy(&cookData.barrier);
+    //NOTE: we need to wait for all threads to finish so that we know they've had time
+    //      to read data->done (and exit the loop) before we clobber this stack frame
+    for (int i = 0; i < poolSize; ++i) {
+        pthread_join(threads[i].thread, nullptr);
+    }
+    barrier_destroy(&cookData.barrier);
 
     return { used, rbits[minPalette], gbits[minPalette], bbits[minPalette] };
 }
 
-static void * compress_frames(CompressionData * data) {
+struct CompressionData {
+    int width, height, centiSeconds;
+    int frameIdx;
+    MetaPaletteInfo meta;
+    List<u32 *> cookedFrames;
+    List<FileBuffer> compressedFrames;
+};
+
+// static void * compress_frames(CompressionData * data) {
+static void * compress_frames(void * arg) {
+    CompressionData * data = (CompressionData *) arg;
     MetaPaletteInfo meta = data->meta;
     int width = data->width, height = data->height, centiSeconds = data->centiSeconds;
     // StridedList lzw = { (i16 *) malloc(4096 * (meta.maxUsed + 1) * sizeof(i16)) };
@@ -586,42 +562,17 @@ static void * compress_frames(CompressionData * data) {
     }
 }
 
-static void * wait_for_work(void * arg) {
-    ThreadGlobal * data = (ThreadGlobal *) arg;
-    while (true) {
-        //XXX: could these threads be spinning through this outer loop while other threads are
-        //     waiting to complete?
-        while (data->activeThreads <= 0) {
-            pthread_mutex_lock(&data->mutex);
-            pthread_cond_wait(&data->condition, &data->mutex);
-            pthread_mutex_unlock(&data->mutex);
-        }
-
-        if (data->compress) {
-            compress_frames(&data->compressionData);
-            return nullptr;
-        } else {
-            // cook_frame(&data->cookData, local->id, data->activeThreads);
-        }
-
-        int dummy = __sync_fetch_and_add(&data->activeThreads, -1);
-        // printf("retiring   active threads %d\n", dummy);
-        // fflush(stdout);
-    }
-}
-
 //TODO:
-//have cooking and compression use their own separate thread pools, for simplicity?
-//use thread barriers for synchronization instead of condition variables
-//create only as many threads as needed
+//add very short GIF test case
+//add very small GIF test case
 //multithread color binning
 //multithread color counting
+//rearrange cooking code to use one fewer barriers
 //SIMD-ize color counting
 //write thread barrier spinlock routines
 //test performance using mutex vs. spinlock for thread barrier?
 //use VLAs or alloca() wherever reasonable
 //allow specifying different thread counts for cooking and compression?
-//combine unnecessarily repeated variables and simplify code
 //dynamically determine physical/logical core count
 //make threading code work on win/MSVC as well
 //put threading code behind preprocessor option
@@ -633,23 +584,6 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
     float preAmble, preTotal;
     preAmble = preTotal = get_time();
-
-    //TODO: spawn only as many threads as we actually need
-    //create worker threads for later use
-    ThreadGlobal threadData = {};
-    pthread_mutex_init(&threadData.mutex, nullptr);
-    pthread_cond_init(&threadData.condition, nullptr);
-    threadCount -= 1;
-    pthread_t threads[threadCount];
-    pthread_attr_t attr;
-
-    //ensure that threads will be joinable (this is not guaranteed to be a default setting)
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-    for (int i = 0; i < threadCount; ++i) {
-        pthread_create(&threads[i], &attr, wait_for_work, &threadData);
-    }
-    pthread_attr_destroy(&attr);
 
     //allocate space for cooked frames
     List<u32 *> cookedFrames = create_list<u32 *>(rawFrames.len + 1);
@@ -671,14 +605,21 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
 
     float preCompress = get_time();
-    threadData.compressionData = { width, height, centiSeconds, 1, meta, cookedFrames,
+    CompressionData compressData = { width, height, centiSeconds, 1, meta, cookedFrames,
                                    create_list<FileBuffer>(cookedFrames.len - 1) };
-    threadData.compressionData.compressedFrames.len = cookedFrames.len - 1;
+    compressData.compressedFrames.len = cookedFrames.len - 1;
 
-    //wake all worker threads to do compression work
-    threadData.activeThreads = threadCount;
-    threadData.compress = true;
-    pthread_cond_broadcast(&threadData.condition);
+    //spawn worker threads for compression
+    int poolSize = min(rawFrames.len - 1, threadCount - 1);
+    pthread_t threads[poolSize];
+    //ensure that threads will be joinable (this is not guaranteed to be a default setting)
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+    for (int i = 0; i < poolSize; ++i) {
+        pthread_create(&threads[i], &attr, compress_frames, &compressData);
+    }
+    pthread_attr_destroy(&attr);
 
     //header
     FileBuffer buf = create_file_buffer(2048);
@@ -707,14 +648,14 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     buf.write_unsafe<u16>(0); //loop forever
     buf.write_unsafe<u8>(0); //block terminator
 
-    compress_frames(&threadData.compressionData);
+    compress_frames(&compressData);
 
     //wait for threads to finish and round up results
-    for (int i = 0; i < threadCount; ++i) {
+    for (int i = 0; i < poolSize; ++i) {
         pthread_join(threads[i], nullptr);
     }
 
-    for (FileBuffer b : threadData.compressionData.compressedFrames) {
+    for (FileBuffer b : compressData.compressedFrames) {
         buf.write_block(b.block, b.size());
         b.finalize();
     }
@@ -735,12 +676,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     free(cookedMemBlock);
     cookedFrames.finalize();
     free(meta.used);
-    threadData.compressionData.compressedFrames.finalize();
-
-    pthread_mutex_destroy(&threadData.mutex);
-    pthread_cond_destroy(&threadData.condition);
-
-    printf("sync waits: %d\n", sync_waits);
+    compressData.compressedFrames.finalize();
 
     timers.total = get_time() - preTotal;
     return timers;
