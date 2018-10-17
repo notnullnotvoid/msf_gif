@@ -14,14 +14,14 @@ struct ThreadBarrier {
     int flag, count, num;
 };
 
-void barrier_init(ThreadBarrier * bar, int num) {
+static void barrier_init(ThreadBarrier * bar, int num) {
     *bar = {};
     pthread_mutex_init(&bar->mutex, nullptr);
     pthread_cond_init(&bar->cond, nullptr);
     bar->num = num;
 }
 
-void barrier_wait(ThreadBarrier * bar) {
+static void barrier_wait(ThreadBarrier * bar) {
     pthread_mutex_lock(&bar->mutex);
     int flag = bar->flag;
     // int count = __sync_fetch_and_add(bar->count, 1);
@@ -39,7 +39,7 @@ void barrier_wait(ThreadBarrier * bar) {
     pthread_mutex_unlock(&bar->mutex);
 }
 
-void barrier_destroy(ThreadBarrier * bar) {
+static void barrier_destroy(ThreadBarrier * bar) {
     pthread_mutex_destroy(&bar->mutex);
     pthread_cond_destroy(&bar->cond);
 }
@@ -66,7 +66,7 @@ struct BlockBuffer {
     u16 bytes[129];
 };
 
-void put_code(FileBuffer * buf, BlockBuffer * block, int bits, u32 code) {
+static void put_code(FileBuffer * buf, BlockBuffer * block, int bits, u32 code) {
     //insert new code into block buffer
     int idx = block->bits / 16;
     int bit = block->bits % 16;
@@ -262,9 +262,10 @@ struct CookData {
     int width, height;
     PixelFormat format;
     int totalThreads; //duplicated with info in barrier?
+    bool * * used;
     bool dither;
 
-    //changed sometimes
+    //non-constant
     bool done;
     ThreadBarrier barrier;
 
@@ -281,17 +282,16 @@ struct CookLocal {
     CookData * global;
 };
 
-//TODO: inline this into cook_frames
 static void cook_frame(CookData * data, int id) {
     //TODO: make sure this won't ever exclude the last line from computation
     int miny =  id      * (data->height / (float) data->totalThreads);
     int maxy = (id + 1) * (data->height / (float) data->totalThreads);
 
-    if (data->currentFrame == 0) {
-        printf("  thread %d    miny %3d   maxy %3d   raw %p   cooked %p\n",
-            id, miny, maxy, data->raw.pixels, data->cooked);
-        fflush(stdout);
-    }
+    // if (data->currentFrame == 0) {
+    //     printf("  thread %d    miny %3d   maxy %3d   raw %p   cooked %p\n",
+    //         id, miny, maxy, data->raw.pixels, data->cooked);
+    //     fflush(stdout);
+    // }
 
     if (data->dither)
         cook_frame_part_dithered(data->raw, data->cooked, data->width, miny, maxy,
@@ -299,15 +299,23 @@ static void cook_frame(CookData * data, int id) {
     else
         cook_frame_part(data->raw, data->cooked, data->width, miny, maxy,
                         data->rbits, data->gbits, data->bbits, data->format);
+
+    //mark down which colors are used out of the full 15-bit palette
+    bool * used = data->used[id];
+    u32 * frame = &data->cooked[data->width * miny];
+    int paletteSize = 1 << (data->rbits + data->gbits + data->bbits);
+    memset(used, 0, paletteSize * sizeof(bool));
+    for (int j = 0; j < data->width * (maxy - miny); ++j)
+        used[frame[j]] = true;
 }
 
 static void * cook_frames(void * arg) {
     CookLocal * local = (CookLocal *) arg;
     CookData * data = local->global;
-    while (!data->done) {
+    while (true) {
         barrier_wait(&data->barrier);
+        if (data->done) { return nullptr; }
         cook_frame(data, local->id);
-        barrier_wait(&data->barrier);
         barrier_wait(&data->barrier);
     }
     return nullptr;
@@ -317,16 +325,21 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         int width, int height, bool dither, PixelFormat format,
         int threadCount, DebugTimers & timers)
 {
-    int pixelsPerBatch = 4096 * 8;
+    int pixelsPerBatch = 4096 * 8; //arbitrary number which can be tuned for performance
     int linesPerBatch = (pixelsPerBatch + width - 1) / width; //round up
     int maxCookThreads = max(1, height / linesPerBatch);
     int poolSize = min(threadCount - 1, maxCookThreads - 1);
     printf("pixelsPerBatch %d   linesPerBatch %d   maxCookThreads %d   poolSize %d\n",
         pixelsPerBatch, linesPerBatch, maxCookThreads, poolSize);
 
-    //spawn thread pool for cooking
-    CookData cookData = { width, height, format, poolSize + 1, dither };
+    bool * threadUsedMem = (bool *) malloc((poolSize + 1) * (1 << 15));
+    bool * threadUsed[poolSize + 1];
+    for (int i = 0; i < poolSize + 1; ++i)
+        threadUsed[i] = &threadUsedMem[i * (1 << 15)];
+    CookData cookData = { width, height, format, poolSize + 1, threadUsed, dither };
     barrier_init(&cookData.barrier, poolSize + 1);
+
+    //spawn thread pool for cooking
     CookLocal threads[poolSize];
     for (int i = 0; i < poolSize; ++i) {
         threads[i].id = i;
@@ -357,7 +370,6 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         free(used[i - 1]);
         used[i - 1] = (bool *) malloc(paletteSize * sizeof(bool));
 
-
         float preCook = get_time();
         cookData.raw = rawFrames[i - 1];
         cookData.cooked = frame;
@@ -373,12 +385,12 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         timers.cook += get_time() - preCook;
 
         //mark down which colors are used out of the full 15-bit palette
-        memset(used[i - 1], 0, paletteSize * sizeof(bool));
-        for (int j = 0; j < width * height; ++j)
-            used[i - 1][frame[j]] = true;
-
         float preCount = get_time();
         //count how many fall into the meta-palette
+        memset(used[i - 1], 0, paletteSize * sizeof(bool));
+        for (int k = 0; k < poolSize + 1; ++k)
+            for (int j = 0; j < paletteSize; ++j)
+                used[i - 1][j] |= threadUsed[k][j];
         int count = 0;
         for (int j = 0; j < paletteSize; ++j)
             if (used[i - 1][j])
@@ -391,13 +403,10 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
             ++minPalette;
             minCorrect = idx;
         }
-
-        //TODO: de-dupe this condition?
-        if (!(idx < minCorrect + (int) cookedFrames.len - 1)) {
-            cookData.done = true;
-        }
-        barrier_wait(&cookData.barrier);
     }
+
+    cookData.done = true;
+    barrier_wait(&cookData.barrier);
 
     //NOTE: we need to wait for all threads to finish so that we know they've had time
     //      to read data->done (and exit the loop) before we clobber this stack frame
@@ -405,6 +414,7 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         pthread_join(threads[i].thread, nullptr);
     }
     barrier_destroy(&cookData.barrier);
+    free(threadUsedMem);
 
     return { used, rbits[minPalette], gbits[minPalette], bbits[minPalette] };
 }
@@ -417,7 +427,6 @@ struct CompressionData {
     List<FileBuffer> compressedFrames;
 };
 
-// static void * compress_frames(CompressionData * data) {
 static void * compress_frames(void * arg) {
     CompressionData * data = (CompressionData *) arg;
     MetaPaletteInfo meta = data->meta;
@@ -565,10 +574,9 @@ static void * compress_frames(void * arg) {
 //TODO:
 //add very short GIF test case
 //add very small GIF test case
-//multithread color binning
-//multithread color counting
-//rearrange cooking code to use one fewer barriers
 //SIMD-ize color counting
+//multithread color counting
+//combine cooking and marking into a single pass?
 //write thread barrier spinlock routines
 //test performance using mutex vs. spinlock for thread barrier?
 //use VLAs or alloca() wherever reasonable
@@ -592,8 +600,6 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     for (int i = 0; i < (int) rawFrames.len + 1; ++i) {
         cookedFrames.add(cookedMemBlock + width * height * i);
     }
-
-
 
     float preChoice = get_time();
     MetaPaletteInfo meta = choose_meta_palette(
@@ -655,6 +661,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
         pthread_join(threads[i], nullptr);
     }
 
+    //TODO: maybe do this with a single allocation?
     for (FileBuffer b : compressData.compressedFrames) {
         buf.write_block(b.block, b.size());
         b.finalize();
