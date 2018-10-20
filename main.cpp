@@ -47,6 +47,7 @@ int main() {
     fflush(stdout);
 
     List<DebugTimers> timers = {};
+    size_t totalSize = 0;
 
     //TODO: write both dithered and non-dithered versions each to their own folder?
     //TODO: automatically regression-test against known good versions of the GIFs?
@@ -73,9 +74,11 @@ int main() {
         // printf("%12s      cook: %6.4f   count: %6.4f   choice: %6.4f   amble: %6.4f   palette: %6.4f   inner: %6.4f   compress: %6.4f   write: %6.4f   total: %6.4f   loss: %6.4f\n",
         //     names.begin()[i], timers[i].cook, timers[i].count, timers[i].choice, timers[i].amble, timers[i].palette, timers[i].inner, timers[i].compress, timers[i].write, timers[i].total,
         //     timers[i].total - (timers[i].amble + timers[i].compress + timers[i].write));
-        printf("%12s      cook: %6.4f   count: %6.4f   choice: %6.4f   amble: %6.4f   compress: %6.4f   write: %6.4f   total: %6.4f   loss: %6.4f\n",
+        int size = blobs[i]->frames * blobs[i]->width * blobs[i]->height * 4;
+        totalSize += size;
+        printf("%12s      cook: %5.3f   count: %5.3f   choice: %5.3f   amble: %5.3f   compress: %5.3f   write: %5.3f   total: %5.3f   lost: %5.3f   %4.2f GB/s\n",
             names.begin()[i], timers[i].cook, timers[i].count, timers[i].choice, timers[i].amble, timers[i].compress, timers[i].write, timers[i].total,
-            timers[i].total - (timers[i].amble + timers[i].compress + timers[i].write));
+            timers[i].total - (timers[i].amble + timers[i].compress + timers[i].write), size / timers[i].total / 1024 / 1024 / 1024);
         totals.cook += timers[i].cook;
         totals.count += timers[i].count;
         totals.choice += timers[i].choice;
@@ -89,8 +92,9 @@ int main() {
     // printf("\n%12s      cook: %6.4f   count: %6.4f   choice: %6.4f   amble: %6.4f   palette: %6.4f   inner: %6.4f   compress: %6.4f   write: %6.4f   total: %6.4f   lost: %6.4f\n",
     //     "totals", totals.cook, totals.count, totals.choice, totals.amble, totals.palette, totals.inner, totals.compress, totals.write, totals.total,
     //     totals.total - (totals.amble + totals.compress + totals.write));
-    printf("\n%12s      cook: %6.4f   count: %6.4f   choice: %6.4f   amble: %6.4f   compress: %6.4f   write: %6.4f   total: %6.4f   lost: %6.4f\n",
-        "totals", totals.cook, totals.count, totals.choice, totals.amble, totals.compress, totals.write, totals.total, totals.total - (totals.amble + totals.compress + totals.write));
+    printf("\n%12s      cook: %5.3f   count: %5.3f   choice: %5.3f   amble: %5.3f   compress: %5.3f   write: %5.3f   total: %5.3f   lost: %5.3f   %4.2f GB/s\n\n",
+        "totals", totals.cook, totals.count, totals.choice, totals.amble, totals.compress, totals.write, totals.total,
+        totals.total - (totals.amble + totals.compress + totals.write), totalSize / totals.total / 1024 / 1024 / 1024);
 
     //TODO: track input and output sizes and encode speed for each GIF and for all of them together
 

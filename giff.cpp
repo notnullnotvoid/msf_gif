@@ -1,5 +1,7 @@
-//NOTE: AVX2 doesn't appear to make the exporter any faster overall, so they're removed for now
+//NOTE: AVX2 doesn't appear to make the exporter any faster overall, so it's removed for now
 //TODO: figure out why they aren't faster
+
+//TODO: combine rbits/gbits/bbits into a struct to reduce verbosity?
 
 #include "giff.hpp"
 #include "common.hpp"
@@ -114,7 +116,7 @@ static bool simd_friendly(PixelFormat f) {
 }
 
 static void cook_frame_part(RawFrame raw, u32 * cooked, int width, int miny, int maxy,
-                     int rbits, int gbits, int bbits, PixelFormat format)
+                     int rbits, int gbits, int bbits, PixelFormat format, bool * used)
 {
     if (simd_friendly(format)) {
         int rshift = format.ridx * 8 + 8 - rbits;
@@ -161,6 +163,12 @@ static void cook_frame_part(RawFrame raw, u32 * cooked, int width, int miny, int
                 // __m128i out = _mm_or_si128(r, _mm_or_si128(g, b));
 
                 _mm_storeu_si128((__m128i *) c, out);
+
+                //mark colors
+                used[c[0]] = true;
+                used[c[1]] = true;
+                used[c[2]] = true;
+                used[c[3]] = true;
             }
 
             for (; x < width; ++x) {
@@ -168,6 +176,7 @@ static void cook_frame_part(RawFrame raw, u32 * cooked, int width, int miny, int
                 cooked[y * width + x] = p[format.bidx] >> (8 - bbits) << (rbits + gbits) |
                                         p[format.gidx] >> (8 - gbits) <<  rbits          |
                                         p[format.ridx] >> (8 - rbits);
+                used[cooked[y * width + x]] = true; //mark colors
             }
         }
     } else {
@@ -177,13 +186,14 @@ static void cook_frame_part(RawFrame raw, u32 * cooked, int width, int miny, int
                 cooked[y * width + x] = p[format.bidx] >> (8 - bbits) << (rbits + gbits) |
                                         p[format.gidx] >> (8 - gbits) <<  rbits          |
                                         p[format.ridx] >> (8 - rbits);
+                used[cooked[y * width + x]] = true; //mark colors
             }
         }
     }
 }
 
 static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int miny, int maxy,
-                         int rbits, int gbits, int bbits, PixelFormat fmt)
+                         int rbits, int gbits, int bbits, PixelFormat fmt, bool * used)
 {
     int ditherKernel[8 * 8] = {
          0, 48, 12, 60,  3, 51, 15, 63,
@@ -230,6 +240,12 @@ static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int 
                 b = _mm_slli_epi32(b, rbits + gbits);
                 __m128i out = _mm_or_si128(r, _mm_or_si128(g, b));
                 _mm_storeu_si128((__m128i *) c, out);
+
+                //mark colors
+                used[c[0]] = true;
+                used[c[1]] = true;
+                used[c[2]] = true;
+                used[c[3]] = true;
             }
 
             for (; x < width; ++x) {
@@ -240,6 +256,7 @@ static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int 
                     min(255, p[fmt.bidx] + (k >> (bbits - 2))) >> (8 - bbits) << (rbits + gbits) |
                     min(255, p[fmt.gidx] + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits          |
                     min(255, p[fmt.ridx] + (k >> (rbits - 2))) >> (8 - rbits);
+                used[cooked[y * width + x]] = true; //mark colors
             }
         }
     } else {
@@ -252,6 +269,7 @@ static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int 
                     min(255, p[fmt.bidx] + (k >> (bbits - 2))) >> (8 - bbits) << (rbits + gbits) |
                     min(255, p[fmt.gidx] + (k >> (gbits - 2))) >> (8 - gbits) <<  rbits          |
                     min(255, p[fmt.ridx] + (k >> (rbits - 2))) >> (8 - rbits);
+                used[cooked[y * width + x]] = true; //mark colors
             }
         }
     }
@@ -283,30 +301,20 @@ struct CookLocal {
 };
 
 static void cook_frame(CookData * data, int id) {
-    //TODO: make sure this won't ever exclude the last line from computation
+    //TODO: prove this won't ever exclude the last line from computation
     int miny =  id      * (data->height / (float) data->totalThreads);
     int maxy = (id + 1) * (data->height / (float) data->totalThreads);
 
-    // if (data->currentFrame == 0) {
-    //     printf("  thread %d    miny %3d   maxy %3d   raw %p   cooked %p\n",
-    //         id, miny, maxy, data->raw.pixels, data->cooked);
-    //     fflush(stdout);
-    // }
+    bool * used = data->used[id];
+    int paletteSize = 1 << (data->rbits + data->gbits + data->bbits);
+    memset(used, 0, paletteSize * sizeof(bool));
 
     if (data->dither)
         cook_frame_part_dithered(data->raw, data->cooked, data->width, miny, maxy,
-                                 data->rbits, data->gbits, data->bbits, data->format);
+                                 data->rbits, data->gbits, data->bbits, data->format, used);
     else
         cook_frame_part(data->raw, data->cooked, data->width, miny, maxy,
-                        data->rbits, data->gbits, data->bbits, data->format);
-
-    //mark down which colors are used out of the full 15-bit palette
-    bool * used = data->used[id];
-    u32 * frame = &data->cooked[data->width * miny];
-    int paletteSize = 1 << (data->rbits + data->gbits + data->bbits);
-    memset(used, 0, paletteSize * sizeof(bool));
-    for (int j = 0; j < data->width * (maxy - miny); ++j)
-        used[frame[j]] = true;
+                        data->rbits, data->gbits, data->bbits, data->format, used);
 }
 
 static void * cook_frames(void * arg) {
@@ -367,6 +375,7 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         int i = idx % (cookedFrames.len - 1) + 1;
         u32 * frame = cookedFrames[i];
         int paletteSize = 1 << (15 - minPalette);
+        //TODO: use fewer allocations here?
         free(used[i - 1]);
         used[i - 1] = (bool *) malloc(paletteSize * sizeof(bool));
 
@@ -575,11 +584,11 @@ static void * compress_frames(void * arg) {
 //add very short GIF test case
 //add very small GIF test case
 //SIMD-ize color counting
-//multithread color counting
-//combine cooking and marking into a single pass?
-//write thread barrier spinlock routines
-//test performance using mutex vs. spinlock for thread barrier?
+////multithread color counting
+////write thread barrier spinlock routines
+////test performance using mutex vs. spinlock for thread barrier?
 //use VLAs or alloca() wherever reasonable
+//use fewer memory allocations
 //allow specifying different thread counts for cooking and compression?
 //dynamically determine physical/logical core count
 //make threading code work on win/MSVC as well
