@@ -41,8 +41,6 @@ int main() {
         blobs.add((RawBlob *) read_entire_file(path));
     }
 
-    //TODO: test SIMD fast path with RGBA pixel data
-
     printf("loaded raw blobs\n");
     fflush(stdout);
 
@@ -64,21 +62,18 @@ int main() {
         char * path = cat("out/", cat(names.begin()[i], ".gif"));
         printf("\nwriting %s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
             path, blob->width, blob->height, blob->frames, blob->centiSeconds);
-        timers.add(save_gif(blob->width, blob->height, frames, blob->centiSeconds, path, true, GIFF_FORMAT_RGBA, 4));
+        timers.add(save_gif(blob->width, blob->height, frames, blob->centiSeconds, path, true, GIFF_FORMAT_RGBA, 4, 8));
         printf("\n");
         fflush(stdout);
     }
 
     DebugTimers totals = {};
     for (int i : range(timers.len)) {
-        // printf("%12s      cook: %6.4f   count: %6.4f   choice: %6.4f   amble: %6.4f   palette: %6.4f   inner: %6.4f   compress: %6.4f   write: %6.4f   total: %6.4f   loss: %6.4f\n",
-        //     names.begin()[i], timers[i].cook, timers[i].count, timers[i].choice, timers[i].amble, timers[i].palette, timers[i].inner, timers[i].compress, timers[i].write, timers[i].total,
-        //     timers[i].total - (timers[i].amble + timers[i].compress + timers[i].write));
         int size = blobs[i]->frames * blobs[i]->width * blobs[i]->height * 4;
         totalSize += size;
-        printf("%12s      cook: %5.3f   count: %5.3f   choice: %5.3f   amble: %5.3f   compress: %5.3f   write: %5.3f   total: %5.3f   lost: %5.3f   %4.2f GB/s\n",
+        printf("%14s      cook: %5.3f   count: %5.3f   choice: %5.3f   amble: %5.3f   compress: %5.3f   write: %5.3f   total: %5.3f   lost: %5.3f   %4.2f GB/s in   %5.2f MB/s out\n",
             names.begin()[i], timers[i].cook, timers[i].count, timers[i].choice, timers[i].amble, timers[i].compress, timers[i].write, timers[i].total,
-            timers[i].total - (timers[i].amble + timers[i].compress + timers[i].write), size / timers[i].total / 1024 / 1024 / 1024);
+            timers[i].total - (timers[i].amble + timers[i].compress + timers[i].write), size / timers[i].total / 1024 / 1024 / 1024, timers[i].size / timers[i].total / 1024 / 1024);
         totals.cook += timers[i].cook;
         totals.count += timers[i].count;
         totals.choice += timers[i].choice;
@@ -88,15 +83,13 @@ int main() {
         totals.compress += timers[i].compress;
         totals.write += timers[i].write;
         totals.total += timers[i].total;
+        totals.size += timers[i].size;
     }
-    // printf("\n%12s      cook: %6.4f   count: %6.4f   choice: %6.4f   amble: %6.4f   palette: %6.4f   inner: %6.4f   compress: %6.4f   write: %6.4f   total: %6.4f   lost: %6.4f\n",
-    //     "totals", totals.cook, totals.count, totals.choice, totals.amble, totals.palette, totals.inner, totals.compress, totals.write, totals.total,
-    //     totals.total - (totals.amble + totals.compress + totals.write));
-    printf("\n%12s      cook: %5.3f   count: %5.3f   choice: %5.3f   amble: %5.3f   compress: %5.3f   write: %5.3f   total: %5.3f   lost: %5.3f   %4.2f GB/s\n\n",
+    printf("\n%14s      cook: %5.3f   count: %5.3f   choice: %5.3f   amble: %5.3f   compress: %5.3f   write: %5.3f   total: %5.3f   lost: %5.3f   %4.2f GB/s in   %5.2f MB/s out\n\n",
         "totals", totals.cook, totals.count, totals.choice, totals.amble, totals.compress, totals.write, totals.total,
-        totals.total - (totals.amble + totals.compress + totals.write), totalSize / totals.total / 1024 / 1024 / 1024);
+        totals.total - (totals.amble + totals.compress + totals.write), totalSize / totals.total / 1024 / 1024 / 1024, totals.size / totals.total / 1024 / 1024);
 
-    //TODO: track input and output sizes and encode speed for each GIF and for all of them together
+    printf("%ld in, %d out\n\n", totalSize, totals.size);
 
     return 0;
 }

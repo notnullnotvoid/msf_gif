@@ -333,7 +333,7 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         int width, int height, bool dither, PixelFormat format,
         int threadCount, DebugTimers & timers)
 {
-    int pixelsPerBatch = 4096 * 8; //arbitrary number which can be tuned for performance
+    int pixelsPerBatch = 4096 * 4; //arbitrary number which can be tuned for performance
     int linesPerBatch = (pixelsPerBatch + width - 1) / width; //round up
     int maxCookThreads = max(1, height / linesPerBatch);
     int poolSize = min(threadCount - 1, maxCookThreads - 1);
@@ -589,13 +589,15 @@ static void * compress_frames(void * arg) {
 ////test performance using mutex vs. spinlock for thread barrier?
 //use VLAs or alloca() wherever reasonable
 //use fewer memory allocations
-//allow specifying different thread counts for cooking and compression?
 //dynamically determine physical/logical core count
+//SIMD-ize dither kernel derivation?
+//write directly to file rather than combining into intermediate buffer?
 //make threading code work on win/MSVC as well
 //put threading code behind preprocessor option
 
 DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds,
-                     const char * path, bool dither, PixelFormat format, int threadCount)
+                     const char * path, bool dither, PixelFormat format,
+                     int cookThreadCount, int compressThreadCount)
 {
     DebugTimers timers = {};
 
@@ -612,7 +614,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
     float preChoice = get_time();
     MetaPaletteInfo meta = choose_meta_palette(
-        rawFrames, cookedFrames, width, height, dither, format, threadCount, timers);
+        rawFrames, cookedFrames, width, height, dither, format, cookThreadCount, timers);
     timers.choice = get_time() - preChoice;
     printf("bits: %d, %d, %d\n", meta.rbits, meta.gbits, meta.bbits);
     timers.amble = get_time() - preAmble;
@@ -625,7 +627,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     compressData.compressedFrames.len = cookedFrames.len - 1;
 
     //spawn worker threads for compression
-    int poolSize = min(rawFrames.len - 1, threadCount - 1);
+    int poolSize = min(rawFrames.len - 1, compressThreadCount - 1);
     pthread_t threads[poolSize];
     //ensure that threads will be joinable (this is not guaranteed to be a default setting)
     pthread_attr_t attr;
@@ -678,6 +680,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
     buf.write<u8>(0x3B); //trailing marker
     timers.compress = get_time() - preCompress;
+    timers.size = buf.size();
 
     float preWrite = get_time();
     //write data to file
