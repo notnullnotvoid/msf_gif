@@ -11,16 +11,16 @@ struct RawFrame {
 };
 
 struct DebugTimers {
-	float cook, count, choice, amble, palette, inner, compress, write, total;
-	int size;
+    float cook, count, choice, amble, palette, inner, compress, write, total;
+    int size;
 };
 
 struct PixelFormat {
-	ptrdiff_t ridx, gidx, bidx, stride;
+    ptrdiff_t ridx, gidx, bidx, stride;
 };
 
 DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds,
-					 const char * path, bool dither, PixelFormat format,
+                     const char * path, bool dither, PixelFormat format,
                      int cookThreadCount, int compressThreadCount);
 
 #define GIFF_FORMAT_RGBA { 0, 1, 2, 4 }

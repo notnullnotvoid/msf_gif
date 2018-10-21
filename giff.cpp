@@ -105,7 +105,8 @@ static void reset(StridedList * lzw, int tableSize, int stride) {
 }
 
 struct MetaPaletteInfo {
-    bool * * used;
+    // bool * * used;
+    bool * usedMem;
     int rbits, gbits, bbits;
 };
 
@@ -280,7 +281,7 @@ struct CookData {
     int width, height;
     PixelFormat format;
     int totalThreads; //duplicated with info in barrier?
-    bool * * used;
+    bool * usedMem;
     bool dither;
 
     //non-constant
@@ -305,7 +306,7 @@ static void cook_frame(CookData * data, int id) {
     int miny =  id      * (data->height / (float) data->totalThreads);
     int maxy = (id + 1) * (data->height / (float) data->totalThreads);
 
-    bool * used = data->used[id];
+    bool * used = &data->usedMem[id * (1 << 15)];
     int paletteSize = 1 << (data->rbits + data->gbits + data->bbits);
     memset(used, 0, paletteSize * sizeof(bool));
 
@@ -341,10 +342,7 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         pixelsPerBatch, linesPerBatch, maxCookThreads, poolSize);
 
     bool * threadUsedMem = (bool *) malloc((poolSize + 1) * (1 << 15));
-    bool * threadUsed[poolSize + 1];
-    for (int i = 0; i < poolSize + 1; ++i)
-        threadUsed[i] = &threadUsedMem[i * (1 << 15)];
-    CookData cookData = { width, height, format, poolSize + 1, threadUsed, dither };
+    CookData cookData = { width, height, format, poolSize + 1, threadUsedMem, dither };
     barrier_init(&cookData.barrier, poolSize + 1);
 
     //spawn thread pool for cooking
@@ -355,9 +353,7 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         pthread_create(&threads[i].thread, nullptr, cook_frames, &threads[i]);
     }
 
-    bool * * used = (bool * *) malloc(rawFrames.len * sizeof(bool *));
-    //set to null so we can spuriously free() with no effect
-    memset(used, 0, rawFrames.len * sizeof(bool *));
+    bool * usedMem = (bool *) malloc(rawFrames.len * (1 << 15) * sizeof(bool));
 
     //bit depth for each channel
     //TODO: generate these programmatically so we can get rid of the arrays
@@ -375,9 +371,7 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         int i = idx % (cookedFrames.len - 1) + 1;
         u32 * frame = cookedFrames[i];
         int paletteSize = 1 << (15 - minPalette);
-        //TODO: use fewer allocations here?
-        free(used[i - 1]);
-        used[i - 1] = (bool *) malloc(paletteSize * sizeof(bool));
+        bool * used = &usedMem[(i - 1) * (1 << 15)];
 
         float preCook = get_time();
         cookData.raw = rawFrames[i - 1];
@@ -390,19 +384,17 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         barrier_wait(&cookData.barrier);
         cook_frame(&cookData, poolSize);
         barrier_wait(&cookData.barrier);
-
         timers.cook += get_time() - preCook;
 
         //mark down which colors are used out of the full 15-bit palette
         float preCount = get_time();
-        //count how many fall into the meta-palette
-        memset(used[i - 1], 0, paletteSize * sizeof(bool));
+        memset(used, 0, paletteSize * sizeof(bool));
         for (int k = 0; k < poolSize + 1; ++k)
             for (int j = 0; j < paletteSize; ++j)
-                used[i - 1][j] |= threadUsed[k][j];
+                used[j] |= threadUsedMem[k * (1 << 15) + j];
         int count = 0;
         for (int j = 0; j < paletteSize; ++j)
-            if (used[i - 1][j])
+            if (used[j])
                 ++count;
         timers.count += get_time() - preCount;
 
@@ -425,7 +417,7 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
     barrier_destroy(&cookData.barrier);
     free(threadUsedMem);
 
-    return { used, rbits[minPalette], gbits[minPalette], bbits[minPalette] };
+    return { usedMem, rbits[minPalette], gbits[minPalette], bbits[minPalette] };
 }
 
 struct CompressionData {
@@ -454,19 +446,20 @@ static void * compress_frames(void * arg) {
 
         u32 * pframe = data->cookedFrames[frameIdx - 1];
         u32 * cframe = data->cookedFrames[frameIdx];
+        bool * used = &meta.usedMem[(frameIdx - 1) * (1 << 15)];
         FileBuffer buf = create_file_buffer(1024);
 
         //allocate tlb
         int totalBits = meta.rbits + meta.gbits + meta.bbits;
         int tlbSize = 1 << totalBits;
-        u8 * tlb = (u8 *) malloc(tlbSize * sizeof(u8));
+        u8 tlb[tlbSize];
 
         //generate palette
         struct Color3 { u8 r, g, b; };
         Color3 table[256] = {};
         int tableIdx = 1; //we start counting at 1 because 0 is the transparent color
         for (int i = 0; i < tlbSize; ++i) {
-            if (meta.used[frameIdx - 1][i]) {
+            if (used[i]) {
                 tlb[i] = tableIdx;
                 int rmask = (1 << meta.rbits) - 1;
                 int gmask = (1 << meta.gbits) - 1;
@@ -486,8 +479,6 @@ static void * compress_frames(void * arg) {
                 ++tableIdx;
             }
         }
-
-        free(meta.used[frameIdx - 1]);
         // printf("frame %d uses %d colors\n", j, tableIdx);
 
         int tableBits = bit_log(tableIdx - 1);
@@ -559,8 +550,6 @@ static void * compress_frames(void * arg) {
             }
         }
 
-        free(tlb);
-
         //write code for leftover index buffer contents, then the end code
         put_code(&buf, &block, bit_log(lzw.len - 1), lastCode);
         put_code(&buf, &block, bit_log(lzw.len), tableSize + 1); //end code
@@ -587,8 +576,6 @@ static void * compress_frames(void * arg) {
 ////multithread color counting
 ////write thread barrier spinlock routines
 ////test performance using mutex vs. spinlock for thread barrier?
-//use VLAs or alloca() wherever reasonable
-//use fewer memory allocations
 //dynamically determine physical/logical core count
 //SIMD-ize dither kernel derivation?
 //write directly to file rather than combining into intermediate buffer?
@@ -605,7 +592,8 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     preAmble = preTotal = get_time();
 
     //allocate space for cooked frames
-    List<u32 *> cookedFrames = create_list<u32 *>(rawFrames.len + 1);
+    u32 * cookedFramesMem[rawFrames.len + 1];
+    List<u32 *> cookedFrames = { cookedFramesMem, 0, rawFrames.len + 1 };
     u32 * cookedMemBlock = (u32 *) malloc((rawFrames.len + 1) * width * height * sizeof(u32));
     memset(cookedMemBlock, 0, width * height * sizeof(u32)); //set dummy frame to background color
     for (int i = 0; i < (int) rawFrames.len + 1; ++i) {
@@ -693,8 +681,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     //cleanup
     buf.finalize();
     free(cookedMemBlock);
-    cookedFrames.finalize();
-    free(meta.used);
+    free(meta.usedMem);
     compressData.compressedFrames.finalize();
 
     timers.total = get_time() - preTotal;
