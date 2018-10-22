@@ -1,5 +1,5 @@
-#ifndef GIF_HPP
-#define GIF_HPP
+#ifndef GIFF_HPP
+#define GIFF_HPP
 
 #include "List.hpp"
 #include "common.hpp"
@@ -33,4 +33,4 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 #define GIFF_FORMAT_AY   { 1, 1, 1, 2 }
 #define GIFF_FORMAT_Y    { 0, 0, 0, 1 }
 
-#endif
+#endif //GIFF_HPP

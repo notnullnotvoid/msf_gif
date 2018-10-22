@@ -1,5 +1,3 @@
-gif exporter notes
-
 
 
 allow "immediate mode" (frame-by-frame) export
@@ -7,20 +5,6 @@ allow "immediate mode" (frame-by-frame) export
 	limited ability for immediate-mode payoff because all frames must be cooked before any can be compressed
 		allow compressing one-at-a-time to avoid long stalls?
 			or just make it so damn fast that it doesn't matter :^)
-
-allow user to specify channel importance (RGB, RBG, GRB, GBR, BRG, BGR)
-	maybe even allow them to provide their own palette chain????? would that be too much? probably...
-		I think allowing them to specify maximum bits per channel is good enough!
-allow user to provide their own malloc, realloc, free equivalents?
-allow user to explicitly enable/disable SIMD paths
-maybe allow different input formats (RGBA, BGRA, RGB, etc.)???
-	look at how stb_image_write library handles these sort of API design decisions
-	ask people on the discord for their input?
-
-remove dependencies on other headers
-remove C++isms to make it pure C code?
-turn into single-header library
-write documentation
 
 true-color???
 	bitfield for color tracker?
@@ -58,3 +42,85 @@ TODO:
 - ensure it works on big-endian architectures? (is this important?)
 - asserts for invalid user parameters??
 - or maybe proper error handling???
+
+
+
+new TODO:
+- compile time options (on or off by default?)
+	- SIMD
+	- multithreading
+
+- remove C++isms/dependencies
+	- FileBuffer
+	- List
+	- common.hpp
+
+- MSVC compatibility
+	- pthreads
+	- intrinsics
+
+- other compilers compatibility
+	- put GCC/clang-specifics behind appropriate ifdefs
+	- de bruijn bit_log()
+
+- make C99
+- ensure compatibility with future C/C++ versions
+- test 32-bit version
+
+- rename everything at global scope to avoid name conflicts
+- finalize ver0.1 API
+	- basic + advanced 
+- get rid of dependency on timing code
+	- hide behind preprocessor macros?
+	- strip out entirely?
+- combine header and implementation into single file
+
+- write documentation
+	- in file
+	- in repository
+	- things to cover:
+		- use case for this library
+			- things this library specifically doesn't do
+				- incremental encoding/encoding in a background thread (YET)
+				- exact colors, fancy GIF features
+				- image resizing (use stb_image_resize if you need this)
+		- explanation of RawFrame/PixelFormat flexibility
+		- how much memory the library will allocate
+		- API, parameter-by-parameter
+		- compile-time options
+		- performance tips
+- publish and publicize
+
+
+
+things to do maybe now, maybe later?:
+- compile-time custom allocators
+	- option for providing a plain memory buffer instead of alloc functions
+		- could reduce boilerplate, but people doing custom memory management probably already have suitable functions for this anyway, right?
+
+- incremental API for exporting without freezing the main thread
+	- or is multithreading good enough for people who need this behavior?
+	
+- channel importance runtime option
+- maximum bits per channel
+	- is this useful to anyone? probably not?
+- big-endian compatibility?
+	- this is probably not important... big-endian is kinda dead
+
+
+
+can be done at any time (not essential):
+- more test cases
+- SIMD-ize color counting
+- SIMD-ize kernel derivation
+- optimize palette generation
+- replace thread barrier mechanism
+- increase bit depth to 16
+- front-facing API changes
+
+- write directly to file?
+- bitfield for `used` array?
+- explicit error handling?
+
+- compare against other single-header or popular GIF export libraries
+

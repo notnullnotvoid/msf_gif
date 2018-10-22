@@ -7,8 +7,11 @@
 #include "common.hpp"
 #include "FileBuffer.hpp"
 
-#include <pthread.h>
+#ifdef GIFF_SSE2
 #include <emmintrin.h>
+#endif //GIFF_SSE2
+
+#include <pthread.h>
 
 struct ThreadBarrier {
     pthread_mutex_t mutex;
@@ -105,20 +108,22 @@ static void reset(StridedList * lzw, int tableSize, int stride) {
 }
 
 struct MetaPaletteInfo {
-    // bool * * used;
     bool * usedMem;
     int rbits, gbits, bbits;
 };
 
+#ifdef GIFF_SSE2
 static bool simd_friendly(PixelFormat f) {
     return f.stride == 4 && f.ridx >= 0 && f.ridx < 4
                          && f.gidx >= 0 && f.gidx < 4
                          && f.bidx >= 0 && f.bidx < 4;
 }
+#endif //GIFF_SSE2
 
 static void cook_frame_part(RawFrame raw, u32 * cooked, int width, int miny, int maxy,
                      int rbits, int gbits, int bbits, PixelFormat format, bool * used)
 {
+#ifdef GIFF_SSE2
     if (simd_friendly(format)) {
         int rshift = format.ridx * 8 + 8 - rbits;
         int gshift = format.gidx * 8 + 8 - gbits;
@@ -181,6 +186,7 @@ static void cook_frame_part(RawFrame raw, u32 * cooked, int width, int miny, int
             }
         }
     } else {
+#endif //GIFF_SSE2
         for (int y = miny; y < maxy; ++y) {
             for (int x = 0; x < width; ++x) {
                 u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
@@ -190,12 +196,15 @@ static void cook_frame_part(RawFrame raw, u32 * cooked, int width, int miny, int
                 used[cooked[y * width + x]] = true; //mark colors
             }
         }
+#ifdef GIFF_SSE2
     }
+#endif //GIFF_SSE2
 }
 
 static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int miny, int maxy,
                          int rbits, int gbits, int bbits, PixelFormat fmt, bool * used)
 {
+    //TODO: try a 4x4 dither kernel?
     int ditherKernel[8 * 8] = {
          0, 48, 12, 60,  3, 51, 15, 63,
         32, 16, 44, 28, 35, 19, 47, 31,
@@ -207,6 +216,7 @@ static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int 
         42, 26, 38, 22, 41, 25, 37, 21,
     };
 
+#ifdef GIFF_SSE2
     if (simd_friendly(fmt) && !(fmt.ridx == fmt.gidx || fmt.ridx == fmt.bidx)) {
         //TODO: is the cost of deriving the dither kernel significant to performance?
         int derivedKernel[8 * 8];
@@ -231,6 +241,7 @@ static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int 
                 int dx = x & 7, dy = y & 7;
                 int * kp = &derivedKernel[dy * 8 + dx];
 
+                //TODO: try manually unrolling this loop 2x so the dither kernel stays in registers
                 __m128i in = _mm_loadu_si128((__m128i *) p);
                 __m128i k = _mm_loadu_si128((__m128i *) kp);
                 in = _mm_adds_epu8(in, k);
@@ -261,6 +272,7 @@ static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int 
             }
         }
     } else {
+#endif //GIFF_SSE2
         for (int y = miny; y < maxy; ++y) {
             for (int x = 0; x < width; ++x) {
                 u8 * p = &raw.pixels[y * raw.pitch + x * fmt.stride];
@@ -273,7 +285,9 @@ static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int 
                 used[cooked[y * width + x]] = true; //mark colors
             }
         }
+#ifdef GIFF_SSE2
     }
+#endif //GIFF_SSE2
 }
 
 struct CookData {
