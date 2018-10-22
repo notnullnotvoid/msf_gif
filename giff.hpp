@@ -2,11 +2,10 @@
 #define GIFF_HPP
 
 #include "List.hpp"
-#include "common.hpp"
 #include <stddef.h>
 
 struct RawFrame {
-    u8 * pixels;
+    uint8_t * pixels;
     int pitch;
 };
 

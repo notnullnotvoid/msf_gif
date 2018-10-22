@@ -1,10 +1,16 @@
 //NOTE: AVX2 doesn't appear to make the exporter any faster overall, so it's removed for now
-//TODO: figure out why they aren't faster
+//TODO: figure out why it isn't faster
 
 //TODO: combine rbits/gbits/bbits into a struct to reduce verbosity?
 
 #include "giff.hpp"
-#include "common.hpp"
+
+#include <string.h> //memcpy
+#include <stdio.h> //FILE ops (fopen, etc.)
+
+static int min(int a, int b) {
+    return a < b? a : b;
+}
 
 #ifdef GIFF_SSE2
 #include <emmintrin.h>
@@ -99,11 +105,11 @@ void write_data_unsafe(FileBuffer * buf, void * data, size_t bytes) {
     buf->head += bytes;
 }
 
-void write_u8(FileBuffer * buf, u8 data) {
+void write_u8(FileBuffer * buf, uint8_t data) {
     *buf->head++ = data;
 }
 
-void write_u16(FileBuffer * buf, u16 data) {
+void write_u16(FileBuffer * buf, uint16_t data) {
     *buf->head++ = data;
     *buf->head++ = data >> 8;
 }
@@ -118,11 +124,11 @@ FileBuffer create_file_buffer(size_t bytes) {
 ////////////////////////////////////////////////////////////////////////////////
 
 struct BlockBuffer {
-    u32 bits;
-    u16 bytes[129];
+    uint32_t bits;
+    uint16_t bytes[129];
 };
 
-static void put_code(FileBuffer * buf, BlockBuffer * block, int bits, u32 code) {
+static void put_code(FileBuffer * buf, BlockBuffer * block, int bits, uint32_t code) {
     //insert new code into block buffer
     int idx = block->bits / 16;
     int bit = block->bits % 16;
@@ -143,17 +149,17 @@ static void put_code(FileBuffer * buf, BlockBuffer * block, int bits, u32 code) 
 }
 
 struct StridedList {
-    i16 * data;
+    int16_t * data;
     size_t len;
     size_t stride;
 
-    i16 * operator[](size_t index) {
+    int16_t * operator[](size_t index) {
         return &data[index * stride];
     }
 };
 
 static void reset(StridedList * lzw, int tableSize, int stride) {
-    memset(lzw->data, 0xFF, 4096 * stride * sizeof(i16));
+    memset(lzw->data, 0xFF, 4096 * stride * sizeof(int16_t));
     lzw->len = tableSize + 2;
     lzw->stride = stride;
 }
@@ -171,8 +177,8 @@ static bool simd_friendly(PixelFormat f) {
 }
 #endif //GIFF_SSE2
 
-static void cook_frame_part(RawFrame raw, u32 * cooked, int width, int miny, int maxy,
-                     int rbits, int gbits, int bbits, PixelFormat format, bool * used)
+static void cook_frame_part(RawFrame raw, uint32_t * cooked, int width, int miny, int maxy,
+                            int rbits, int gbits, int bbits, PixelFormat format, bool * used)
 {
 #ifdef GIFF_SSE2
     if (simd_friendly(format)) {
@@ -200,8 +206,8 @@ static void cook_frame_part(RawFrame raw, u32 * cooked, int width, int miny, int
             //      This is relevant because we might be getting hamstrung by the fact that we can
             //      only issue one vector shift instruction per cycle.
             for (; x < width - 3; x += 4) {
-                u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
-                u32 * c = &cooked[y * width + x];
+                uint8_t * p = &raw.pixels[y * raw.pitch + x * format.stride];
+                uint32_t * c = &cooked[y * width + x];
                 __m128i in = _mm_loadu_si128((__m128i *) p);
 
                 __m128i r = _mm_and_si128(_mm_srli_epi32(in, rshift), rmask);
@@ -229,7 +235,7 @@ static void cook_frame_part(RawFrame raw, u32 * cooked, int width, int miny, int
             }
 
             for (; x < width; ++x) {
-                u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+                uint8_t * p = &raw.pixels[y * raw.pitch + x * format.stride];
                 cooked[y * width + x] = p[format.bidx] >> (8 - bbits) << (rbits + gbits) |
                                         p[format.gidx] >> (8 - gbits) <<  rbits          |
                                         p[format.ridx] >> (8 - rbits);
@@ -240,7 +246,7 @@ static void cook_frame_part(RawFrame raw, u32 * cooked, int width, int miny, int
 #endif //GIFF_SSE2
         for (int y = miny; y < maxy; ++y) {
             for (int x = 0; x < width; ++x) {
-                u8 * p = &raw.pixels[y * raw.pitch + x * format.stride];
+                uint8_t * p = &raw.pixels[y * raw.pitch + x * format.stride];
                 cooked[y * width + x] = p[format.bidx] >> (8 - bbits) << (rbits + gbits) |
                                         p[format.gidx] >> (8 - gbits) <<  rbits          |
                                         p[format.ridx] >> (8 - rbits);
@@ -252,8 +258,8 @@ static void cook_frame_part(RawFrame raw, u32 * cooked, int width, int miny, int
 #endif //GIFF_SSE2
 }
 
-static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int miny, int maxy,
-                         int rbits, int gbits, int bbits, PixelFormat fmt, bool * used)
+static void cook_frame_part_dithered(RawFrame raw, uint32_t * cooked, int width, int miny, int maxy,
+                                     int rbits, int gbits, int bbits, PixelFormat fmt, bool * used)
 {
     //TODO: try a 4x4 dither kernel?
     int ditherKernel[8 * 8] = {
@@ -287,8 +293,8 @@ static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int 
         for (int y = miny; y < maxy; ++y) {
             int x = 0;
             for (; x < width - 3; x += 4) {
-                u8 * p = &raw.pixels[y * raw.pitch + x * fmt.stride];
-                u32 * c = &cooked[y * width + x];
+                uint8_t * p = &raw.pixels[y * raw.pitch + x * fmt.stride];
+                uint32_t * c = &cooked[y * width + x];
                 int dx = x & 7, dy = y & 7;
                 int * kp = &derivedKernel[dy * 8 + dx];
 
@@ -312,7 +318,7 @@ static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int 
             }
 
             for (; x < width; ++x) {
-                u8 * p = &raw.pixels[y * raw.pitch + x * fmt.stride];
+                uint8_t * p = &raw.pixels[y * raw.pitch + x * fmt.stride];
                 int dx = x & 7, dy = y & 7;
                 int k = ditherKernel[dy * 8 + dx];
                 cooked[y * width + x] =
@@ -326,7 +332,7 @@ static void cook_frame_part_dithered(RawFrame raw, u32 * cooked, int width, int 
 #endif //GIFF_SSE2
         for (int y = miny; y < maxy; ++y) {
             for (int x = 0; x < width; ++x) {
-                u8 * p = &raw.pixels[y * raw.pitch + x * fmt.stride];
+                uint8_t * p = &raw.pixels[y * raw.pitch + x * fmt.stride];
                 int dx = x & 7, dy = y & 7;
                 int k = ditherKernel[dy * 8 + dx];
                 cooked[y * width + x] =
@@ -357,7 +363,7 @@ struct CookData {
 
     //filled out from scratch every frame
     RawFrame raw;
-    u32 * cooked;
+    uint32_t * cooked;
     int rbits, gbits, bbits;
 };
 
@@ -400,9 +406,9 @@ static void * cook_frames(void * arg) {
 }
 #endif //GIFF_MULTITHREAD
 
-static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *> cookedFrames,
-        int width, int height, bool dither, PixelFormat format,
-        int threadCount, DebugTimers & timers)
+static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<uint32_t *> cookedFrames,
+                                           int width, int height, bool dither, PixelFormat format,
+                                           int threadCount, DebugTimers & timers)
 {
 #ifdef GIFF_MULTITHREAD
     int pixelsPerBatch = 4096 * 4; //arbitrary number which can be tuned for performance
@@ -443,7 +449,7 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
     int idx = 0;
     while (idx < minCorrect + (int) cookedFrames.len - 1) {
         int i = idx % (cookedFrames.len - 1) + 1;
-        u32 * frame = cookedFrames[i];
+        uint32_t * frame = cookedFrames[i];
         int paletteSize = 1 << (15 - minPalette);
         bool * used = &usedMem[(i - 1) * (1 << 15)];
 
@@ -508,7 +514,7 @@ struct CompressionData {
     int width, height, centiSeconds;
     int frameIdx;
     MetaPaletteInfo meta;
-    List<u32 *> cookedFrames;
+    List<uint32_t *> cookedFrames;
     List<FileBuffer> compressedFrames;
 };
 
@@ -517,8 +523,8 @@ static void * compress_frames(void * arg) {
     MetaPaletteInfo meta = data->meta;
     int width = data->width, height = data->height, centiSeconds = data->centiSeconds;
     // StridedList lzw = { (i16 *) malloc(4096 * (meta.maxUsed + 1) * sizeof(i16)) };
-    StridedList lzw = { (i16 *) malloc(4096 * 256 * sizeof(i16)) };
-    u8 idxBuffer[4096];
+    StridedList lzw = { (int16_t *) malloc(4096 * 256 * sizeof(int16_t)) };
+    uint8_t idxBuffer[4096];
     int idxLen = 0;
 
     while (true) {
@@ -528,18 +534,18 @@ static void * compress_frames(void * arg) {
             return nullptr;
         }
 
-        u32 * pframe = data->cookedFrames[frameIdx - 1];
-        u32 * cframe = data->cookedFrames[frameIdx];
+        uint32_t * pframe = data->cookedFrames[frameIdx - 1];
+        uint32_t * cframe = data->cookedFrames[frameIdx];
         bool * used = &meta.usedMem[(frameIdx - 1) * (1 << 15)];
         FileBuffer buf = create_file_buffer(1024);
 
         //allocate tlb
         int totalBits = meta.rbits + meta.gbits + meta.bbits;
         int tlbSize = 1 << totalBits;
-        u8 tlb[tlbSize];
+        uint8_t tlb[tlbSize];
 
         //generate palette
-        struct Color3 { u8 r, g, b; };
+        struct Color3 { uint8_t r, g, b; };
         Color3 table[256] = {};
         int tableIdx = 1; //we start counting at 1 because 0 is the transparent color
         for (int i = 0; i < tlbSize; ++i) {
@@ -556,9 +562,9 @@ static void * compress_frames(void * arg) {
                 g <<= 8 - meta.gbits;
                 b <<= 8 - meta.bbits;
                 table[tableIdx] = {
-                    (u8)(r | r >> meta.rbits),
-                    (u8)(g | g >> meta.gbits),
-                    (u8)(b | b >> meta.bbits),
+                    (uint8_t)(r | r >> meta.rbits),
+                    (uint8_t)(g | g >> meta.gbits),
+                    (uint8_t)(b | b >> meta.bbits),
                 };
                 ++tableIdx;
             }
@@ -603,7 +609,7 @@ static void * compress_frames(void * arg) {
         put_code(&buf, &block, bit_log(lzw.len - 1), tableSize); //clear code
 
         int lastCode = cframe[0] == pframe[0]? 0 : tlb[cframe[0]];
-        for (int i : range(1, width * height)) {
+        for (int i = 1; i < width * height; ++i) {
             idxBuffer[idxLen++] = cframe[i] == pframe[i]? 0 : tlb[cframe[i]];
             int code = lzw[lastCode][idxBuffer[idxLen - 1]];
             if (code < 0) {
@@ -677,10 +683,12 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     preAmble = preTotal = get_time();
 
     //allocate space for cooked frames
-    u32 * cookedFramesMem[rawFrames.len + 1];
-    List<u32 *> cookedFrames = { cookedFramesMem, 0, rawFrames.len + 1 };
-    u32 * cookedMemBlock = (u32 *) malloc((rawFrames.len + 1) * width * height * sizeof(u32));
-    memset(cookedMemBlock, 0, width * height * sizeof(u32)); //set dummy frame to background color
+    uint32_t * cookedFramesMem[rawFrames.len + 1];
+    List<uint32_t *> cookedFrames = { cookedFramesMem, 0, rawFrames.len + 1 };
+    uint32_t * cookedMemBlock =
+        (uint32_t *) malloc((rawFrames.len + 1) * width * height * sizeof(uint32_t));
+    //set dummy frame to background color
+    memset(cookedMemBlock, 0, width * height * sizeof(uint32_t));
     for (int i = 0; i < (int) rawFrames.len + 1; ++i) {
         cookedFrames.add(cookedMemBlock + width * height * i);
     }
@@ -689,7 +697,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     MetaPaletteInfo meta = choose_meta_palette(
         rawFrames, cookedFrames, width, height, dither, format, cookThreadCount, timers);
     timers.choice = get_time() - preChoice;
-    printf("bits: %d, %d, %d\n", meta.rbits, meta.gbits, meta.bbits);
+    // printf("bits: %d, %d, %d\n", meta.rbits, meta.gbits, meta.bbits);
     timers.amble = get_time() - preAmble;
 
 
@@ -715,8 +723,8 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
     //header
     FileBuffer buf = create_file_buffer(2048);
-    for (char c : range("GIF89a")) {
-        write_u8(&buf, c);
+    for (const char * c = "GIF89a"; *c != '\0'; ++c) {
+        write_u8(&buf, *c);
     }
 
     //logical screen descriptor
@@ -731,8 +739,8 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     write_u8(&buf, 0x21); //extension introducer
     write_u8(&buf, 0xFF); //extension identifier
     write_u8(&buf, 11); //fixed length data size
-    for (char c : range("NETSCAPE2.0")) {
-        write_u8(&buf, c);
+    for (const char * c = "NETSCAPE2.0"; *c != '\0'; ++c) {
+        write_u8(&buf, *c);
     }
     write_u8(&buf, 3); //data block size
     write_u8(&buf, 1); //???
