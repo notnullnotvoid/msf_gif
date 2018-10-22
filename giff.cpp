@@ -3,12 +3,8 @@
 
 //TODO: combine rbits/gbits/bbits into a struct to reduce verbosity?
 
-// #define GIFF_SSE2
-// #define GIFF_MULTITHREAD
-
 #include "giff.hpp"
 #include "common.hpp"
-#include "FileBuffer.hpp"
 
 #ifdef GIFF_SSE2
 #include <emmintrin.h>
@@ -71,6 +67,56 @@ static void barrier_destroy(ThreadBarrier * bar) {
 //forward declaration
 double get_time();
 
+////////////////////////////////////////////////////////////////////////////////
+/// FileBuffer                                                               ///
+////////////////////////////////////////////////////////////////////////////////
+
+struct FileBuffer {
+    uint8_t * block;
+    uint8_t * head;
+    uint8_t * end;
+};
+
+void check(FileBuffer * buf, size_t bytes) {
+    if (buf->head + bytes < buf->end)
+        return;
+
+    size_t byte = buf->head - buf->block;
+    size_t size = buf->end - buf->block;
+
+    //done in a loop so adding payloads larger than the current buffer size will work
+    while (byte + bytes >= size) {
+        size = size * 2 + 1;
+    }
+
+    buf->block = (uint8_t *) realloc(buf->block, size);
+    buf->head = buf->block + byte;
+    buf->end = buf->block + size;
+}
+
+void write_data_unsafe(FileBuffer * buf, void * data, size_t bytes) {
+    memcpy(buf->head, data, bytes);
+    buf->head += bytes;
+}
+
+void write_u8(FileBuffer * buf, u8 data) {
+    *buf->head++ = data;
+}
+
+void write_u16(FileBuffer * buf, u16 data) {
+    *buf->head++ = data;
+    *buf->head++ = data >> 8;
+}
+
+FileBuffer create_file_buffer(size_t bytes) {
+    uint8_t * block = (uint8_t *) malloc(bytes);
+    return { block, block, block + bytes };
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// FileBuffer                                                               ///
+////////////////////////////////////////////////////////////////////////////////
+
 struct BlockBuffer {
     u32 bits;
     u16 bytes[129];
@@ -86,9 +132,9 @@ static void put_code(FileBuffer * buf, BlockBuffer * block, int bits, u32 code) 
 
     //flush the block buffer if it's full
     if (block->bits >= 255 * 8) {
-        buf->check(256);
-        buf->write_unsafe<u8>(255);
-        buf->write_block_unsafe<u8>((u8 *) block->bytes, 255);
+        check(buf, 256);
+        write_u8(buf, 255);
+        write_data_unsafe(buf, block->bytes, 255);
 
         block->bits -= 255 * 8;
         block->bytes[0] = block->bytes[127] >> 8 | block->bytes[128] << 8;
@@ -523,35 +569,35 @@ static void * compress_frames(void * arg) {
         int tableSize = 1 << tableBits;
         // printf("idx: %d bits: %d size: %d\n\n", tableIdx, tableBits, tableSize);
 
-        buf.check(8 + 10);
+        check(&buf, 8 + 10);
         //graphics control extension
-        buf.write_unsafe<u8>(0x21); //extension introducer
-        buf.write_unsafe<u8>(0xF9); //extension identifier
-        buf.write_unsafe<u8>(4); //block size (always 4)
+        write_u8(&buf, 0x21); //extension introducer
+        write_u8(&buf, 0xF9); //extension identifier
+        write_u8(&buf, 4); //block size (always 4)
         //reserved, disposal method:keep, input flag, transparency flag
         //NOTE: MSVC incorrectly generates warning C4806 here due to a compiler bug.
-        // buf.write_unsafe<u8>(0b000'001'0'0 | (j != 1));
-        buf.write_unsafe<u8>(0b00000100 | (frameIdx != 1));
-        buf.write_unsafe<u16>(centiSeconds); //x/100 seconds per frame
-        buf.write_unsafe<u8>(0); //transparent color index
-        buf.write_unsafe<u8>(0); //block terminator
+        write_u8(&buf, 0b00000100 | (frameIdx != 1)); //000 001 0 0
+        write_u16(&buf, centiSeconds); //x/100 seconds per frame
+        write_u8(&buf, 0); //transparent color index
+        write_u8(&buf, 0); //block terminator
 
         //image descriptor
-        buf.write_unsafe<u8>(0x2C); //image separator
-        buf.write_unsafe<u16>(0); //image left
-        buf.write_unsafe<u16>(0); //image top
-        buf.write_unsafe<u16>(width);
-        buf.write_unsafe<u16>(height);
+        write_u8(&buf, 0x2C); //image separator
+        write_u16(&buf, 0); //image left
+        write_u16(&buf, 0); //image top
+        write_u16(&buf, width);
+        write_u16(&buf, height);
         //local color table flag, interlace flag, sort flag, reserved, local color table size
-        // buf.write_unsafe<u8>(0b1'0'0'00'000 | (tableBits - 1));
-        buf.write_unsafe<u8>(0b10000000 | (tableBits - 1));
+        write_u8(&buf, 0b10000000 | (tableBits - 1)); //1 0 0 00 000
 
         //local color table
-        buf.write_block(table, tableSize);
+        check(&buf, tableSize * sizeof(Color3));
+        write_data_unsafe(&buf, table, tableSize * sizeof(Color3));
 
         //image data
         BlockBuffer block = {};
-        buf.write<u8>(tableBits); //lzw minimum code size
+        check(&buf, 1);
+        write_u8(&buf, tableBits);
         reset(&lzw, tableSize, tableIdx);
         //XXX: do we actually need to write this?
         put_code(&buf, &block, bit_log(lzw.len - 1), tableSize); //clear code
@@ -595,12 +641,13 @@ static void * compress_frames(void * arg) {
         //flush remaining data
         if (block.bits) {
             int bytes = (block.bits + 7) / 8; //round up
-            buf.check(bytes + 1);
-            buf.write_unsafe<u8>(bytes);
-            buf.write_block_unsafe<u8>((u8 *) block.bytes, bytes);
+            check(&buf, bytes + 1);
+            write_u8(&buf, bytes);
+            write_data_unsafe(&buf, block.bytes, bytes);
         }
 
-        buf.write<u8>(0); //terminating block
+        check(&buf, 1);
+        write_u8(&buf, 0); //terminating block
         idxLen = 0; //reset encoding state
 
         data->compressedFrames[frameIdx - 1] = buf;
@@ -669,29 +716,28 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     //header
     FileBuffer buf = create_file_buffer(2048);
     for (char c : range("GIF89a")) {
-        buf.write_unsafe(c);
+        write_u8(&buf, c);
     }
 
     //logical screen descriptor
-    buf.write_unsafe<u16>(width);
-    buf.write_unsafe<u16>(height);
+    write_u16(&buf, width);
+    write_u16(&buf, height);
     //global color table flag, color resolution (???), sort flag, global color table size
-    // buf.write_unsafe<u8>(0b0'001'0'000);
-    buf.write_unsafe<u8>(0b00010000);
-    buf.write_unsafe<u8>(0); //background color index
-    buf.write_unsafe<u8>(0); //pixel aspect ratio
+    write_u8(&buf, 0b00010000); //0 001 0 000
+    write_u8(&buf, 0); //background color index
+    write_u8(&buf, 0); //pixel aspect ratio
 
     //application extension
-    buf.write_unsafe<u8>(0x21); //extension introducer
-    buf.write_unsafe<u8>(0xFF); //extension identifier
-    buf.write_unsafe<u8>(11); //fixed length data size
+    write_u8(&buf, 0x21); //extension introducer
+    write_u8(&buf, 0xFF); //extension identifier
+    write_u8(&buf, 11); //fixed length data size
     for (char c : range("NETSCAPE2.0")) {
-        buf.write_unsafe(c);
+        write_u8(&buf, c);
     }
-    buf.write_unsafe<u8>(3); //data block size
-    buf.write_unsafe<u8>(1); //???
-    buf.write_unsafe<u16>(0); //loop forever
-    buf.write_unsafe<u8>(0); //block terminator
+    write_u8(&buf, 3); //data block size
+    write_u8(&buf, 1); //???
+    write_u16(&buf, 0); //loop forever
+    write_u8(&buf, 0); //block terminator
 
     compress_frames(&compressData);
 
@@ -704,24 +750,26 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
     //TODO: maybe do this with a single allocation?
     for (FileBuffer b : compressData.compressedFrames) {
-        buf.write_block(b.block, b.size());
-        b.finalize();
+        check(&buf, b.head - b.block);
+        write_data_unsafe(&buf, b.block, b.head - b.block);
+        free(b.block);
     }
 
-    buf.write<u8>(0x3B); //trailing marker
+    check(&buf, 1);
+    write_u8(&buf, 0x3B); //trailing marker
     timers.compress = get_time() - preCompress;
-    timers.size = buf.size();
+    timers.size = buf.head - buf.block;
 
     float preWrite = get_time();
     //write data to file
     FILE * fp = fopen(path, "wb");
     assert(fp);
-    fwrite(buf.block, buf.size(), 1, fp);
+    fwrite(buf.block, buf.head - buf.block, 1, fp);
     fclose(fp);
     timers.write = get_time() - preWrite;
 
     //cleanup
-    buf.finalize();
+    free(buf.block);
     free(cookedMemBlock);
     free(meta.usedMem);
     compressData.compressedFrames.finalize();
