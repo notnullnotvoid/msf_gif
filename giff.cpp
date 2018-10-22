@@ -7,9 +7,14 @@
 
 #include <string.h> //memcpy
 #include <stdio.h> //FILE ops (fopen, etc.)
+#include <stdlib.h> //malloc, etc.
 
-static int min(int a, int b) {
+static inline int min(int a, int b) {
     return a < b? a : b;
+}
+
+static inline int max(int a, int b) {
+    return b < a? a : b;
 }
 
 #ifdef GIFF_SSE2
@@ -406,7 +411,8 @@ static void * cook_frames(void * arg) {
 }
 #endif //GIFF_MULTITHREAD
 
-static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<uint32_t *> cookedFrames,
+static MetaPaletteInfo choose_meta_palette(RawFrame * rawFrames, int rawFrameCount,
+                                           uint32_t * * cookedFrames, int cookedFrameCount,
                                            int width, int height, bool dither, PixelFormat format,
                                            int threadCount, DebugTimers & timers)
 {
@@ -433,7 +439,7 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<uint32
     CookData cookData = { width, height, format, 1, nullptr, dither };
 #endif //GIFF_MULTITHREAD
 
-    bool * usedMem = (bool *) malloc(rawFrames.len * (1 << 15) * sizeof(bool));
+    bool * usedMem = (bool *) malloc(rawFrameCount * (1 << 15) * sizeof(bool));
 
     //bit depth for each channel
     //TODO: generate these programmatically so we can get rid of the arrays
@@ -447,8 +453,8 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<uint32
     int minPalette = 0;
     int minCorrect = 0;
     int idx = 0;
-    while (idx < minCorrect + (int) cookedFrames.len - 1) {
-        int i = idx % (cookedFrames.len - 1) + 1;
+    while (idx < minCorrect + cookedFrameCount - 1) {
+        int i = idx % (cookedFrameCount - 1) + 1;
         uint32_t * frame = cookedFrames[i];
         int paletteSize = 1 << (15 - minPalette);
         bool * used = &usedMem[(i - 1) * (1 << 15)];
@@ -514,8 +520,9 @@ struct CompressionData {
     int width, height, centiSeconds;
     int frameIdx;
     MetaPaletteInfo meta;
-    List<uint32_t *> cookedFrames;
-    List<FileBuffer> compressedFrames;
+    uint32_t * * cookedFrames;
+    FileBuffer * compressedFrames;
+    int frameCount;
 };
 
 static void * compress_frames(void * arg) {
@@ -528,8 +535,12 @@ static void * compress_frames(void * arg) {
     int idxLen = 0;
 
     while (true) {
+#ifdef GIFF_MULTITHREAD
         int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
-        if (frameIdx >= (int) data->cookedFrames.len) {
+#else
+        int frameIdx = data->frameIdx++;
+#endif //GIFF_MULTITHREAD
+        if (frameIdx >= (int) data->frameCount) {
             free(lzw.data);
             return nullptr;
         }
@@ -673,7 +684,8 @@ static void * compress_frames(void * arg) {
 //make threading code work on win/MSVC as well
 //put threading code behind preprocessor option
 
-DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds,
+DebugTimers save_gif(RawFrame * rawFrames, int rawFrameCount,
+                     int width, int height, int centiSeconds,
                      const char * path, bool dither, PixelFormat format,
                      int cookThreadCount, int compressThreadCount)
 {
@@ -683,19 +695,20 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     preAmble = preTotal = get_time();
 
     //allocate space for cooked frames
-    uint32_t * cookedFramesMem[rawFrames.len + 1];
-    List<uint32_t *> cookedFrames = { cookedFramesMem, 0, rawFrames.len + 1 };
+    int cookedFrameCount = rawFrameCount + 1;
+    uint32_t * cookedFrames[cookedFrameCount];
     uint32_t * cookedMemBlock =
-        (uint32_t *) malloc((rawFrames.len + 1) * width * height * sizeof(uint32_t));
+        (uint32_t *) malloc((rawFrameCount + 1) * width * height * sizeof(uint32_t));
     //set dummy frame to background color
     memset(cookedMemBlock, 0, width * height * sizeof(uint32_t));
-    for (int i = 0; i < (int) rawFrames.len + 1; ++i) {
-        cookedFrames.add(cookedMemBlock + width * height * i);
+    for (int i = 0; i < (int) rawFrameCount + 1; ++i) {
+        cookedFrames[i] = cookedMemBlock + width * height * i;
     }
 
     float preChoice = get_time();
     MetaPaletteInfo meta = choose_meta_palette(
-        rawFrames, cookedFrames, width, height, dither, format, cookThreadCount, timers);
+        rawFrames, rawFrameCount, cookedFrames, cookedFrameCount,
+        width, height, dither, format, cookThreadCount, timers);
     timers.choice = get_time() - preChoice;
     // printf("bits: %d, %d, %d\n", meta.rbits, meta.gbits, meta.bbits);
     timers.amble = get_time() - preAmble;
@@ -703,13 +716,13 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
 
     float preCompress = get_time();
-    CompressionData compressData = { width, height, centiSeconds, 1, meta, cookedFrames,
-                                   create_list<FileBuffer>(cookedFrames.len - 1) };
-    compressData.compressedFrames.len = cookedFrames.len - 1;
+    FileBuffer compressedFrames[rawFrameCount];
+    CompressionData compressData =
+        { width, height, centiSeconds, 1, meta, cookedFrames, compressedFrames, cookedFrameCount };
 
 #ifdef GIFF_MULTITHREAD
     //spawn worker threads for compression
-    int poolSize = min(rawFrames.len - 1, compressThreadCount - 1);
+    int poolSize = min(rawFrameCount - 1, compressThreadCount - 1);
     pthread_t threads[poolSize];
     //ensure that threads will be joinable (this is not guaranteed to be a default setting)
     pthread_attr_t attr;
@@ -757,7 +770,8 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 #endif //GIFF_MULTITHREAD
 
     //TODO: maybe do this with a single allocation?
-    for (FileBuffer b : compressData.compressedFrames) {
+    for (int i = 0; i < rawFrameCount; ++i) {
+        FileBuffer b = compressedFrames[i];
         check(&buf, b.head - b.block);
         write_data_unsafe(&buf, b.block, b.head - b.block);
         free(b.block);
@@ -771,7 +785,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     float preWrite = get_time();
     //write data to file
     FILE * fp = fopen(path, "wb");
-    assert(fp);
+    // assert(fp);
     fwrite(buf.block, buf.head - buf.block, 1, fp);
     fclose(fp);
     timers.write = get_time() - preWrite;
@@ -780,7 +794,6 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
     free(buf.block);
     free(cookedMemBlock);
     free(meta.usedMem);
-    compressData.compressedFrames.finalize();
 
     timers.total = get_time() - preTotal;
     return timers;

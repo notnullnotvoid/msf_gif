@@ -1,7 +1,8 @@
 #ifndef GIFF_HPP
 #define GIFF_HPP
 
-#include "List.hpp"
+// #include "List.hpp"
+#include <stdint.h>
 #include <stddef.h>
 
 struct RawFrame {
@@ -18,7 +19,8 @@ struct PixelFormat {
     ptrdiff_t ridx, gidx, bidx, stride;
 };
 
-DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiSeconds,
+DebugTimers save_gif(RawFrame * rawFrames, int rawFrameCount,
+                     int width, int height, int centiSeconds,
                      const char * path, bool dither, PixelFormat format,
                      int cookThreadCount, int compressThreadCount);
 
