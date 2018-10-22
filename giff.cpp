@@ -3,6 +3,9 @@
 
 //TODO: combine rbits/gbits/bbits into a struct to reduce verbosity?
 
+// #define GIFF_SSE2
+// #define GIFF_MULTITHREAD
+
 #include "giff.hpp"
 #include "common.hpp"
 #include "FileBuffer.hpp"
@@ -11,6 +14,7 @@
 #include <emmintrin.h>
 #endif //GIFF_SSE2
 
+#ifdef GIFF_MULTITHREAD
 #include <pthread.h>
 
 struct ThreadBarrier {
@@ -48,6 +52,7 @@ static void barrier_destroy(ThreadBarrier * bar) {
     pthread_mutex_destroy(&bar->mutex);
     pthread_cond_destroy(&bar->cond);
 }
+#endif //GIFF_MULTITHREAD
 
 #ifdef _MSC_VER
     static int bit_log(int i) {
@@ -298,22 +303,25 @@ struct CookData {
     bool * usedMem;
     bool dither;
 
+#ifdef GIFF_MULTITHREAD
     //non-constant
     bool done;
     ThreadBarrier barrier;
+#endif //GIFF_MULTITHREAD
 
     //filled out from scratch every frame
     RawFrame raw;
     u32 * cooked;
     int rbits, gbits, bbits;
-    int currentFrame; //DEBUG
 };
 
+#ifdef GIFF_MULTITHREAD
 struct CookLocal {
     pthread_t thread;
     int id;
     CookData * global;
 };
+#endif //GIFF_MULTITHREAD
 
 static void cook_frame(CookData * data, int id) {
     //TODO: prove this won't ever exclude the last line from computation
@@ -332,6 +340,7 @@ static void cook_frame(CookData * data, int id) {
                         data->rbits, data->gbits, data->bbits, data->format, used);
 }
 
+#ifdef GIFF_MULTITHREAD
 static void * cook_frames(void * arg) {
     CookLocal * local = (CookLocal *) arg;
     CookData * data = local->global;
@@ -343,11 +352,13 @@ static void * cook_frames(void * arg) {
     }
     return nullptr;
 }
+#endif //GIFF_MULTITHREAD
 
 static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *> cookedFrames,
         int width, int height, bool dither, PixelFormat format,
         int threadCount, DebugTimers & timers)
 {
+#ifdef GIFF_MULTITHREAD
     int pixelsPerBatch = 4096 * 4; //arbitrary number which can be tuned for performance
     int linesPerBatch = (pixelsPerBatch + width - 1) / width; //round up
     int maxCookThreads = max(1, height / linesPerBatch);
@@ -366,6 +377,9 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         threads[i].global = &cookData;
         pthread_create(&threads[i].thread, nullptr, cook_frames, &threads[i]);
     }
+#else
+    CookData cookData = { width, height, format, 1, nullptr, dither };
+#endif //GIFF_MULTITHREAD
 
     bool * usedMem = (bool *) malloc(rawFrames.len * (1 << 15) * sizeof(bool));
 
@@ -393,19 +407,27 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         cookData.rbits = rbits[minPalette];
         cookData.gbits = gbits[minPalette];
         cookData.bbits = bbits[minPalette];
-        cookData.currentFrame = idx;
 
+#ifdef GIFF_MULTITHREAD
         barrier_wait(&cookData.barrier);
         cook_frame(&cookData, poolSize);
         barrier_wait(&cookData.barrier);
+#else
+        cookData.usedMem = used;
+        cook_frame(&cookData, 0);
+#endif //GIFF_MULTITHREAD
         timers.cook += get_time() - preCook;
 
         //mark down which colors are used out of the full 15-bit palette
         float preCount = get_time();
+#ifdef GIFF_MULTITHREAD
+        //combine used flags
         memset(used, 0, paletteSize * sizeof(bool));
         for (int k = 0; k < poolSize + 1; ++k)
             for (int j = 0; j < paletteSize; ++j)
                 used[j] |= threadUsedMem[k * (1 << 15) + j];
+#endif //GIFF_MULTITHREAD
+        //count used colors
         int count = 0;
         for (int j = 0; j < paletteSize; ++j)
             if (used[j])
@@ -420,6 +442,7 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
         }
     }
 
+#ifdef GIFF_MULTITHREAD
     cookData.done = true;
     barrier_wait(&cookData.barrier);
 
@@ -430,6 +453,7 @@ static MetaPaletteInfo choose_meta_palette(List<RawFrame> rawFrames, List<u32 *>
     }
     barrier_destroy(&cookData.barrier);
     free(threadUsedMem);
+#endif //GIFF_MULTITHREAD
 
     return { usedMem, rbits[minPalette], gbits[minPalette], bbits[minPalette] };
 }
@@ -628,6 +652,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
                                    create_list<FileBuffer>(cookedFrames.len - 1) };
     compressData.compressedFrames.len = cookedFrames.len - 1;
 
+#ifdef GIFF_MULTITHREAD
     //spawn worker threads for compression
     int poolSize = min(rawFrames.len - 1, compressThreadCount - 1);
     pthread_t threads[poolSize];
@@ -639,6 +664,7 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
         pthread_create(&threads[i], &attr, compress_frames, &compressData);
     }
     pthread_attr_destroy(&attr);
+#endif //GIFF_MULTITHREAD
 
     //header
     FileBuffer buf = create_file_buffer(2048);
@@ -669,10 +695,12 @@ DebugTimers save_gif(int width, int height, List<RawFrame> rawFrames, int centiS
 
     compress_frames(&compressData);
 
+#ifdef GIFF_MULTITHREAD
     //wait for threads to finish and round up results
     for (int i = 0; i < poolSize; ++i) {
         pthread_join(threads[i], nullptr);
     }
+#endif //GIFF_MULTITHREAD
 
     //TODO: maybe do this with a single allocation?
     for (FileBuffer b : compressData.compressedFrames) {
