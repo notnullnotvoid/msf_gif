@@ -1,4 +1,5 @@
-#include "giff.hpp"
+#define GIFF_MULTITHREAD
+#include "giff.h"
 #include "List.hpp"
 #include "common.hpp"
 
@@ -7,11 +8,12 @@
 
 u64 applicationStartupTimeValue;
 
-double get_time() {
+extern "C" double get_time() {
     u64 currentTimeValue = SDL_GetPerformanceCounter();
     u64 diffTimeValue = currentTimeValue - applicationStartupTimeValue;
     double elapsedSeconds = (double)diffTimeValue / (double)SDL_GetPerformanceFrequency();
     return elapsedSeconds;
+    // return 0;
 }
 
 struct RawBlob {
@@ -31,6 +33,7 @@ int main() {
     //TODO: generate this list dynamically?
     auto names = { "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "odd", "sky", "tiles" };
     // auto names = { "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "odd", "tiles" };
+    // auto names = { "bouncy", "diwide", "floor", "keyhole" };
 
     List<RawBlob *> blobs = {};
 

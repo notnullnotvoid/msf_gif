@@ -46,30 +46,11 @@ TODO:
 
 
 new TODO:
-- compile time options (on or off by default?)
-	- SIMD
-	- multithreading
-
-- remove C++isms/dependencies
-	- FileBuffer
-	- List
-	- common.hpp
-
-- MSVC compatibility
+- win+MSVC compatibility
 	- pthreads
 	- intrinsics
 
-- other compilers compatibility
-	- put GCC/clang-specifics behind appropriate ifdefs
-	- de bruijn bit_log()
-
-- make C99
-- ensure compatibility with future C/C++ versions
-- test 32-bit version
-
 - rename everything at global scope to avoid name conflicts
-- finalize ver0.1 API
-	- basic + advanced 
 - get rid of dependency on timing code
 	- hide behind preprocessor macros?
 	- strip out entirely?
@@ -98,8 +79,10 @@ things to do maybe now, maybe later?:
 	- option for providing a plain memory buffer instead of alloc functions
 		- could reduce boilerplate, but people doing custom memory management probably already have suitable functions for this anyway, right?
 
+- API for returning a block of encoded memory instead of writing it out with <stdio.h> functions
 - incremental API for exporting without freezing the main thread
 	- or is multithreading good enough for people who need this behavior?
+- simplified API which automatically determines optimal thread counts?
 	
 - channel importance runtime option
 - maximum bits per channel
@@ -114,13 +97,15 @@ can be done at any time (not essential):
 - SIMD-ize color counting
 - SIMD-ize kernel derivation
 - optimize palette generation
-- replace thread barrier mechanism
+- replace thread barrier mechanism (try spinlock)
 - increase bit depth to 16
 - front-facing API changes
 
 - write directly to file?
 - bitfield for `used` array?
 - explicit error handling?
+
+- multithread color counting?
 
 - compare against other single-header or popular GIF export libraries
 

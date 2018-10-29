@@ -1,24 +1,27 @@
 #ifndef GIFF_HPP
 #define GIFF_HPP
 
-// #include "List.hpp"
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
-struct RawFrame {
+typedef struct {
     uint8_t * pixels;
     int pitch;
-};
+} RawFrame;
 
-struct DebugTimers {
+typedef struct {
     float cook, count, choice, amble, palette, inner, compress, write, total;
     int size;
-};
+} DebugTimers;
 
-struct PixelFormat {
+typedef struct {
     ptrdiff_t ridx, gidx, bidx, stride;
-};
+} PixelFormat;
 
+#ifdef __cplusplus
+extern "C"
+#endif //__cplusplus
 DebugTimers save_gif(RawFrame * rawFrames, int rawFrameCount,
                      int width, int height, int centiSeconds,
                      const char * path, bool dither, PixelFormat format,
