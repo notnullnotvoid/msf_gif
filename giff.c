@@ -85,9 +85,6 @@ static int bit_log(int i) {
 #endif
 }
 
-//forward declaration
-double get_time();
-
 ////////////////////////////////////////////////////////////////////////////////
 /// FileBuffer                                                               ///
 ////////////////////////////////////////////////////////////////////////////////
@@ -421,15 +418,12 @@ static void * cook_frames(void * arg) {
 static MetaPaletteInfo choose_meta_palette(RawFrame * rawFrames, int rawFrameCount,
                                            uint32_t * * cookedFrames, int cookedFrameCount,
                                            int width, int height, bool dither, PixelFormat format,
-                                           int threadCount, DebugTimers * timers)
-{
+                                           int threadCount) {
 #ifndef GIFF_NO_MULTITHREAD
     int pixelsPerBatch = 4096 * 4; //arbitrary number which can be tuned for performance
     int linesPerBatch = (pixelsPerBatch + width - 1) / width; //round up
     int maxCookThreads = max(1, height / linesPerBatch);
     int poolSize = min(threadCount - 1, maxCookThreads - 1);
-    printf("pixelsPerBatch %d   linesPerBatch %d   maxCookThreads %d   poolSize %d\n",
-        pixelsPerBatch, linesPerBatch, maxCookThreads, poolSize);
 
     bool * threadUsedMem = (bool *) malloc((poolSize + 1) * (1 << 15));
     CookData cookData = { width, height, format, poolSize + 1, threadUsedMem, dither };
@@ -466,7 +460,6 @@ static MetaPaletteInfo choose_meta_palette(RawFrame * rawFrames, int rawFrameCou
         int paletteSize = 1 << (15 - minPalette);
         bool * used = &usedMem[(i - 1) * (1 << 15)];
 
-        float preCook = get_time();
         cookData.raw = rawFrames[i - 1];
         cookData.cooked = frame;
         cookData.rbits = rbits[minPalette];
@@ -481,10 +474,8 @@ static MetaPaletteInfo choose_meta_palette(RawFrame * rawFrames, int rawFrameCou
         cookData.usedMem = used;
         cook_frame(&cookData, 0);
 #endif //GIFF_NO_MULTITHREAD
-        timers->cook += get_time() - preCook;
 
         //mark down which colors are used out of the full 15-bit palette
-        float preCount = get_time();
 #ifndef GIFF_NO_MULTITHREAD
         //combine used flags
         memset(used, 0, paletteSize * sizeof(bool));
@@ -497,7 +488,6 @@ static MetaPaletteInfo choose_meta_palette(RawFrame * rawFrames, int rawFrameCou
         for (int j = 0; j < paletteSize; ++j)
             if (used[j])
                 ++count;
-        timers->count += get_time() - preCount;
 
         if (count < 256) {
             ++idx;
@@ -538,6 +528,7 @@ static void * compress_frames(void * arg) {
     MetaPaletteInfo meta = data->meta;
     int width = data->width, height = data->height, centiSeconds = data->centiSeconds;
     // StridedList lzw = { (i16 *) malloc(4096 * (meta.maxUsed + 1) * sizeof(i16)) };
+    //TODO: do a single allocation here instead of one allocation per thread
     StridedList lzw = { (int16_t *) malloc(4096 * 256 * sizeof(int16_t)) };
     uint8_t idxBuffer[4096];
     int idxLen = 0;
@@ -589,11 +580,9 @@ static void * compress_frames(void * arg) {
                 ++tableIdx;
             }
         }
-        // printf("frame %d uses %d colors\n", j, tableIdx);
 
         int tableBits = bit_log(tableIdx - 1);
         int tableSize = 1 << tableBits;
-        // printf("idx: %d bits: %d size: %d\n\n", tableIdx, tableBits, tableSize);
 
         check(&buf, 8 + 10);
         //graphics control extension
@@ -636,7 +625,6 @@ static void * compress_frames(void * arg) {
                 //write to code stream
                 int codeBits = bit_log(lzw.len - 1);
                 put_code(&buf, &block, codeBits, lastCode);
-                // printf("%d-%d-%d  ", lastCode, codeBits, (int) lzw.len);
 
                 //NOTE: [I THINK] we need to leave room for 2 more codes (leftover and end code)
                 //      because we don't ever reset the table after writing the leftover bits
@@ -680,16 +668,9 @@ static void * compress_frames(void * arg) {
     }
 }
 
-DebugTimers save_gif(RawFrame * rawFrames, int rawFrameCount,
-                     int width, int height, int centiSeconds,
-                     const char * path, bool dither, PixelFormat format,
-                     int cookThreadCount, int compressThreadCount)
-{
-    DebugTimers timers = {};
-
-    float preAmble, preTotal;
-    preAmble = preTotal = get_time();
-
+void save_gif(RawFrame * rawFrames, int rawFrameCount, int width, int height, int centiSeconds,
+              const char * path, bool dither, PixelFormat format,
+              int cookThreadCount, int compressThreadCount) {
     //allocate space for cooked frames
     int cookedFrameCount = rawFrameCount + 1;
     uint32_t * cookedFrames[cookedFrameCount];
@@ -701,17 +682,12 @@ DebugTimers save_gif(RawFrame * rawFrames, int rawFrameCount,
         cookedFrames[i] = cookedMemBlock + width * height * i;
     }
 
-    float preChoice = get_time();
     MetaPaletteInfo meta = choose_meta_palette(
         rawFrames, rawFrameCount, cookedFrames, cookedFrameCount,
-        width, height, dither, format, cookThreadCount, &timers);
-    timers.choice = get_time() - preChoice;
-    // printf("bits: %d, %d, %d\n", meta.rbits, meta.gbits, meta.bbits);
-    timers.amble = get_time() - preAmble;
+        width, height, dither, format, cookThreadCount);
 
 
 
-    float preCompress = get_time();
     FileBuffer compressedFrames[rawFrameCount];
     CompressionData compressData =
         { width, height, centiSeconds, 1, meta, cookedFrames, compressedFrames, cookedFrameCount };
@@ -773,22 +749,15 @@ DebugTimers save_gif(RawFrame * rawFrames, int rawFrameCount,
 
     check(&buf, 1);
     write_u8(&buf, 0x3B); //trailing marker
-    timers.compress = get_time() - preCompress;
-    timers.size = buf.head - buf.block;
 
-    float preWrite = get_time();
     //write data to file
     FILE * fp = fopen(path, "wb");
     // assert(fp);
     fwrite(buf.block, buf.head - buf.block, 1, fp);
     fclose(fp);
-    timers.write = get_time() - preWrite;
 
     //cleanup
     free(buf.block);
     free(cookedMemBlock);
     free(meta.usedMem);
-
-    timers.total = get_time() - preTotal;
-    return timers;
 }

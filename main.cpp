@@ -1,4 +1,5 @@
-#define GIFF_MULTITHREAD
+//TODO: write timing code that doesn't rely on instrumentation inside giff.c
+
 #include "giff.h"
 #include "List.hpp"
 #include "common.hpp"
@@ -47,8 +48,8 @@ int main() {
     printf("loaded raw blobs\n");
     fflush(stdout);
 
-    List<DebugTimers> timers = {};
-    size_t totalSize = 0;
+    // List<DebugTimers> timers = {};
+    // size_t totalSize = 0;
 
     //TODO: write both dithered and non-dithered versions each to their own folder?
     //TODO: automatically regression-test against known good versions of the GIFs?
@@ -66,34 +67,34 @@ int main() {
         printf("\nwriting %s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
             path, blob->width, blob->height, blob->frames, blob->centiSeconds);
         // timers.add(save_gif(blob->width, blob->height, frames, blob->centiSeconds, path, true, GIFF_FORMAT_RGBA, 4, 8));
-        timers.add(save_gif(frames.data, frames.len, blob->width, blob->height, blob->centiSeconds, path, true, GIFF_FORMAT_RGBA, 4, 8));
-        printf("\n");
+        // timers.add(save_gif(frames.data, frames.len, blob->width, blob->height, blob->centiSeconds, path, true, GIFF_FORMAT_RGBA, 4, 8));
+        save_gif(frames.data, frames.len, blob->width, blob->height, blob->centiSeconds, path, true, GIFF_FORMAT_RGBA, 4, 8);
         fflush(stdout);
     }
 
-    DebugTimers totals = {};
-    for (int i : range(timers.len)) {
-        int size = blobs[i]->frames * blobs[i]->width * blobs[i]->height * 4;
-        totalSize += size;
-        printf("%14s      cook: %5.3f   count: %5.3f   choice: %5.3f   amble: %5.3f   compress: %5.3f   write: %5.3f   total: %5.3f   lost: %5.3f   %4.2f GB/s in   %5.2f MB/s out\n",
-            names.begin()[i], timers[i].cook, timers[i].count, timers[i].choice, timers[i].amble, timers[i].compress, timers[i].write, timers[i].total,
-            timers[i].total - (timers[i].amble + timers[i].compress + timers[i].write), size / timers[i].total / 1024 / 1024 / 1024, timers[i].size / timers[i].total / 1024 / 1024);
-        totals.cook += timers[i].cook;
-        totals.count += timers[i].count;
-        totals.choice += timers[i].choice;
-        totals.amble += timers[i].amble;
-        totals.palette += timers[i].palette;
-        totals.inner += timers[i].inner;
-        totals.compress += timers[i].compress;
-        totals.write += timers[i].write;
-        totals.total += timers[i].total;
-        totals.size += timers[i].size;
-    }
-    printf("\n%14s      cook: %5.3f   count: %5.3f   choice: %5.3f   amble: %5.3f   compress: %5.3f   write: %5.3f   total: %5.3f   lost: %5.3f   %4.2f GB/s in   %5.2f MB/s out\n\n",
-        "totals", totals.cook, totals.count, totals.choice, totals.amble, totals.compress, totals.write, totals.total,
-        totals.total - (totals.amble + totals.compress + totals.write), totalSize / totals.total / 1024 / 1024 / 1024, totals.size / totals.total / 1024 / 1024);
+    // DebugTimers totals = {};
+    // for (int i : range(timers.len)) {
+    //     int size = blobs[i]->frames * blobs[i]->width * blobs[i]->height * 4;
+    //     totalSize += size;
+    //     printf("%14s      cook: %5.3f   count: %5.3f   choice: %5.3f   amble: %5.3f   compress: %5.3f   write: %5.3f   total: %5.3f   lost: %5.3f   %4.2f GB/s in   %5.2f MB/s out\n",
+    //         names.begin()[i], timers[i].cook, timers[i].count, timers[i].choice, timers[i].amble, timers[i].compress, timers[i].write, timers[i].total,
+    //         timers[i].total - (timers[i].amble + timers[i].compress + timers[i].write), size / timers[i].total / 1024 / 1024 / 1024, timers[i].size / timers[i].total / 1024 / 1024);
+    //     totals.cook += timers[i].cook;
+    //     totals.count += timers[i].count;
+    //     totals.choice += timers[i].choice;
+    //     totals.amble += timers[i].amble;
+    //     totals.palette += timers[i].palette;
+    //     totals.inner += timers[i].inner;
+    //     totals.compress += timers[i].compress;
+    //     totals.write += timers[i].write;
+    //     totals.total += timers[i].total;
+    //     totals.size += timers[i].size;
+    // }
+    // printf("\n%14s      cook: %5.3f   count: %5.3f   choice: %5.3f   amble: %5.3f   compress: %5.3f   write: %5.3f   total: %5.3f   lost: %5.3f   %4.2f GB/s in   %5.2f MB/s out\n\n",
+    //     "totals", totals.cook, totals.count, totals.choice, totals.amble, totals.compress, totals.write, totals.total,
+    //     totals.total - (totals.amble + totals.compress + totals.write), totalSize / totals.total / 1024 / 1024 / 1024, totals.size / totals.total / 1024 / 1024);
 
-    printf("%ld in, %d out\n\n", totalSize, totals.size);
+    // printf("%ld in, %d out\n\n", totalSize, totals.size);
 
     return 0;
 }

@@ -11,21 +11,15 @@ typedef struct {
 } RawFrame;
 
 typedef struct {
-    float cook, count, choice, amble, palette, inner, compress, write, total;
-    int size;
-} DebugTimers;
-
-typedef struct {
     ptrdiff_t ridx, gidx, bidx, stride;
 } PixelFormat;
 
 #ifdef __cplusplus
 extern "C"
 #endif //__cplusplus
-DebugTimers save_gif(RawFrame * rawFrames, int rawFrameCount,
-                     int width, int height, int centiSeconds,
-                     const char * path, bool dither, PixelFormat format,
-                     int cookThreadCount, int compressThreadCount);
+void save_gif(RawFrame * rawFrames, int rawFrameCount, int width, int height, int centiSeconds,
+              const char * path, bool dither, PixelFormat format,
+              int cookThreadCount, int compressThreadCount);
 
 #define GIFF_FORMAT_RGBA { 0, 1, 2, 4 }
 #define GIFF_FORMAT_BGRA { 2, 1, 0, 4 }

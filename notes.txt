@@ -51,9 +51,6 @@ new TODO:
 	- intrinsics
 
 - rename everything at global scope to avoid name conflicts
-- get rid of dependency on timing code
-	- hide behind preprocessor macros?
-	- strip out entirely?
 - combine header and implementation into single file
 
 - write documentation
