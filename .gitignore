@@ -1,5 +1,6 @@
 .DS_Store
 in/
 out/
+new/
 giff
 *.dSYM

@@ -14,44 +14,38 @@ detecting user error? (i.e. invalid parameters)
 
 
 TODO:
-! change to 15 bit meta-meta-palette
-! early-out of palette selection loop
-! switch to using 4-byte ints for palette selection/quantization
-! add optional dithering
-! combine dithered and non-dithered code paths
-! pack bits together when cooking instead of just masking them out
-! switch to using ints instead of pixel structs
-! allow different input data formats?
-! add test cases where width/height are not a multiple of 8
-
-! SSE optimization
-! AVX optimization
-! multithreading
-
-! runtime options for thread count
-- add runtime option for channel importance order?
-- add runtime option for maximum bit depth?
-- add test cases for smaller and larger GIFs?
-- put SIMD and multithreading behind preprocessor options
-- remove other header dependencies
-- allow custom malloc/realloc/free implementations?
-- remove C++isms
-- make sure it compiles correctly on all targets (gcc + clang + msvc, 32 + 64 bit)
+- clean up giff.c and test.cpp
+	- incorporate helper headers into test.cpp to simplify repo???
 - combine header and implementation
-- write documentation
-- ensure it works on big-endian architectures? (is this important?)
-- asserts for invalid user parameters??
-- or maybe proper error handling???
-
-
-
-new TODO:
+	- rename everything at global scope to avoid name conflicts
+	- create multiple implementation test files with different options and test all at once
 - win+MSVC compatibility
 	- pthreads
 	- intrinsics
+- make sure it compiles correctly on all targets (gcc + clang + msvc, 32 + 64 bit)
+- API for returning a block of encoded memory instead of writing it out with <stdio.h> functions
+- comparisons to other libraries
+- write documentation
 
-- rename everything at global scope to avoid name conflicts
-- combine header and implementation into single file
+- incremental API for exporting without freezing the main thread
+	- or is multithreading good enough for people who need this behavior?
+		- probably not, as it would also limit memory consumption, which can be a big deal
+	- rewrite simplified API as a layer over the incremental API
+- simplified API which automatically determines optimal thread counts?
+
+- add runtime option for channel importance order?
+- add runtime option for maximum bit depth?
+- allow custom allocation?
+- SIMD-ize color counting?
+- SIMD-ize kernel derivation?
+- optimize palette generation?
+- replace thread barrier mechanism (try spinlock)?
+- increase bit depth to 16?
+- add test cases for smaller and larger GIFs?
+- asserts for invalid user parameters??
+- proper error handling???
+
+
 
 - write documentation
 	- in file
@@ -69,35 +63,6 @@ new TODO:
 		- performance tips
 - publish and publicize
 
-
-
-things to do maybe now, maybe later?:
-- compile-time custom allocators
-	- option for providing a plain memory buffer instead of alloc functions
-		- could reduce boilerplate, but people doing custom memory management probably already have suitable functions for this anyway, right?
-
-- API for returning a block of encoded memory instead of writing it out with <stdio.h> functions
-- incremental API for exporting without freezing the main thread
-	- or is multithreading good enough for people who need this behavior?
-- simplified API which automatically determines optimal thread counts?
-	
-- channel importance runtime option
-- maximum bits per channel
-	- is this useful to anyone? probably not?
-- big-endian compatibility?
-	- this is probably not important... big-endian is kinda dead
-
-
-
-can be done at any time (not essential):
-- more test cases
-- SIMD-ize color counting
-- SIMD-ize kernel derivation
-- optimize palette generation
-- replace thread barrier mechanism (try spinlock)
-- increase bit depth to 16
-- front-facing API changes
-
 - write directly to file?
 - bitfield for `used` array?
 - explicit error handling?
@@ -105,4 +70,15 @@ can be done at any time (not essential):
 - multithread color counting?
 
 - compare against other single-header or popular GIF export libraries
+
+
+
+https://docs.microsoft.com/en-us/windows/desktop/ProcThread/creating-threads
+https://docs.microsoft.com/en-us/windows/desktop/sync/synchronization-barriers
+
+
+
+env DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib
+env MALLOC_PERMIT_INSANE_REQUESTS=1
+env MALLOC_STRICT_SIZE=8
 

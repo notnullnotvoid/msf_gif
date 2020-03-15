@@ -40,8 +40,6 @@ static void barrier_init(ThreadBarrier * bar, int num) {
 static void barrier_wait(ThreadBarrier * bar) {
     pthread_mutex_lock(&bar->mutex);
     int flag = bar->flag;
-    // int count = __sync_fetch_and_add(bar->count, 1);
-    // if (count + 1 == bar->num) {
     ++bar->count;
     if (bar->count == bar->num) {
         bar->count = 0;
@@ -133,7 +131,7 @@ FileBuffer create_file_buffer(size_t bytes) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// FileBuffer                                                               ///
+/// BlockBuffer                                                              ///
 ////////////////////////////////////////////////////////////////////////////////
 
 typedef struct {
@@ -191,19 +189,9 @@ static void cook_frame_part(RawFrame raw, uint32_t * cooked, int width, int miny
 {
 #ifndef GIFF_NO_SSE2
     if (simd_friendly(format)) {
-        // int rshift = format.ridx * 8 + 8 - rbits;
-        // int gshift = format.gidx * 8 + 8 - gbits;
-        // int bshift = format.bidx * 8 + 8 - bbits;
-        // __m128i rmask = _mm_set1_epi32((1 << rbits) - 1);
-        // __m128i gmask = _mm_set1_epi32((1 << gbits) - 1);
-        // __m128i bmask = _mm_set1_epi32((1 << bbits) - 1);
-
         int rshift = format.ridx * 8 + 8 - rbits;
         int gshift = format.gidx * 8 + 8 - rbits - gbits;
         int bshift = format.bidx * 8 + 8 - rbits - gbits - bbits;
-        // __m128i rmask = _mm_set1_epi32(((1 << rbits) - 1) << (format.ridx * 8 + 8 - rbits));
-        // __m128i gmask = _mm_set1_epi32(((1 << gbits) - 1) << (format.gidx * 8 + 8 - gbits));
-        // __m128i bmask = _mm_set1_epi32(((1 << bbits) - 1) << (format.bidx * 8 + 8 - bbits));
         __m128i rmask = _mm_set1_epi32(((1 << rbits) - 1));
         __m128i gmask = _mm_set1_epi32(((1 << gbits) - 1) << rbits);
         __m128i bmask = _mm_set1_epi32(((1 << bbits) - 1) << rbits << gbits);
@@ -219,16 +207,6 @@ static void cook_frame_part(RawFrame raw, uint32_t * cooked, int width, int miny
                 uint32_t * c = &cooked[y * width + x];
                 __m128i in = _mm_loadu_si128((__m128i *) p);
 
-                // __m128i r = _mm_and_si128(_mm_srli_epi32(in, rshift), rmask);
-                // __m128i g = _mm_and_si128(_mm_srli_epi32(in, gshift), gmask);
-                // __m128i b = _mm_and_si128(_mm_srli_epi32(in, bshift), bmask);
-                // g = _mm_slli_epi32(g, rbits);
-                // b = _mm_slli_epi32(b, rbits + gbits);
-                // __m128i out = _mm_or_si128(r, _mm_or_si128(g, b));
-
-                // __m128i r = _mm_srli_epi32(_mm_and_si128(in, rmask), rshift);
-                // __m128i g = _mm_srli_epi32(_mm_and_si128(in, gmask), gshift);
-                // __m128i b = _mm_srli_epi32(_mm_and_si128(in, bmask), bshift);
                 __m128i r = _mm_and_si128(_mm_srli_epi32(in, rshift), rmask);
                 __m128i g = _mm_and_si128(_mm_srli_epi32(in, gshift), gmask);
                 __m128i b = _mm_and_si128(_mm_srli_epi32(in, bshift), bmask);
@@ -243,6 +221,7 @@ static void cook_frame_part(RawFrame raw, uint32_t * cooked, int width, int miny
                 used[c[3]] = true;
             }
 
+            //TODO: de-dupe this code?
             for (; x < width; ++x) {
                 uint8_t * p = &raw.pixels[y * raw.pitch + x * format.stride];
                 cooked[y * width + x] = p[format.bidx] >> (8 - bbits) << (rbits + gbits) |
@@ -283,7 +262,7 @@ static void cook_frame_part_dithered(RawFrame raw, uint32_t * cooked, int width,
     };
 
 #ifndef GIFF_NO_SSE2
-    if (simd_friendly(fmt) && !(fmt.ridx == fmt.gidx || fmt.ridx == fmt.bidx)) {
+    if (simd_friendly(fmt) && fmt.ridx != fmt.gidx && fmt.ridx != fmt.bidx) {
         //TODO: is the cost of deriving the dither kernel significant to performance?
         int derivedKernel[8 * 8];
         for (int i = 0; i < 8 * 8; ++i) {
@@ -527,7 +506,6 @@ static void * compress_frames(void * arg) {
     CompressionData * data = (CompressionData *) arg;
     MetaPaletteInfo meta = data->meta;
     int width = data->width, height = data->height, centiSeconds = data->centiSeconds;
-    // StridedList lzw = { (i16 *) malloc(4096 * (meta.maxUsed + 1) * sizeof(i16)) };
     //TODO: do a single allocation here instead of one allocation per thread
     StridedList lzw = { (int16_t *) malloc(4096 * 256 * sizeof(int16_t)) };
     uint8_t idxBuffer[4096];
@@ -668,11 +646,12 @@ static void * compress_frames(void * arg) {
     }
 }
 
-void save_gif(RawFrame * rawFrames, int rawFrameCount, int width, int height, int centiSeconds,
+size_t save_gif(RawFrame * rawFrames, int rawFrameCount, int width, int height, int centiSeconds,
               const char * path, bool dither, PixelFormat format,
               int cookThreadCount, int compressThreadCount) {
     //allocate space for cooked frames
     int cookedFrameCount = rawFrameCount + 1;
+    //TODO: regenerate these pointers implicitly on the fly, to save on stack space
     uint32_t * cookedFrames[cookedFrameCount];
     uint32_t * cookedMemBlock =
         (uint32_t *) malloc((rawFrameCount + 1) * width * height * sizeof(uint32_t));
@@ -760,4 +739,6 @@ void save_gif(RawFrame * rawFrames, int rawFrameCount, int width, int height, in
     free(buf.block);
     free(cookedMemBlock);
     free(meta.usedMem);
+
+    return buf.head - buf.block;
 }

@@ -17,7 +17,7 @@ typedef struct {
 #ifdef __cplusplus
 extern "C"
 #endif //__cplusplus
-void save_gif(RawFrame * rawFrames, int rawFrameCount, int width, int height, int centiSeconds,
+size_t save_gif(RawFrame * rawFrames, int rawFrameCount, int width, int height, int centiSeconds,
               const char * path, bool dither, PixelFormat format,
               int cookThreadCount, int compressThreadCount);
 
