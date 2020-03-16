@@ -83,11 +83,11 @@ typedef struct {
     MetaPalette * palettes;
 } MetaPaletteInfo;
 
-typedef struct {
-    uint32_t * pixels;
-    bool * used;
-    int rbits, gbits, bbits;
-} CookedFrame;
+// typedef struct {
+//     uint32_t * pixels;
+//     bool * used;
+//     int rbits, gbits, bbits;
+// } CookedFrame;
 
 static MetaPaletteInfo choose_meta_palette(uint8_t ** rawFrames, int rawFrameCount, uint32_t ** cookedFrames,
     int width, int height)
@@ -105,7 +105,7 @@ static MetaPaletteInfo choose_meta_palette(uint8_t ** rawFrames, int rawFrameCou
         bool * used = &usedMem[i * (1 << 15)];
 
         do {
-            cook_frame(width, height, used, rawFrames[i], cookedFrames[i + 1], rbits[pal], gbits[pal], bbits[pal]);
+            cook_frame(width, height, used, rawFrames[i], cookedFrames[i], rbits[pal], gbits[pal], bbits[pal]);
 
             //count used colors
             count = 0;
@@ -170,14 +170,13 @@ static void compress_frames(int width, int height, int centiSeconds, MetaPalette
     uint32_t ** cookedFrames, FileBuffer * compressedFrames, int frameCount)
 {
     StridedList lzw = { (int16_t *) malloc(4096 * 256 * sizeof(int16_t)) };
-    for (int frameIdx = 1; frameIdx < frameCount; ++frameIdx) {
-        uint32_t * pframe = cookedFrames[frameIdx - 1];
+    for (int frameIdx = 0; frameIdx < frameCount; ++frameIdx) {
         uint32_t * cframe = cookedFrames[frameIdx];
-        bool * used = &meta.usedMem[(frameIdx - 1) * (1 << 15)];
+        bool * used = &meta.usedMem[frameIdx * (1 << 15)];
         FileBuffer buf = create_file_buffer(1024);
 
         //allocate tlb
-        MetaPalette pal = meta.palettes[frameIdx - 1];
+        MetaPalette pal = meta.palettes[frameIdx];
         int totalBits = pal.rbits + pal.gbits + pal.bbits;
         int tlbSize = 1 << totalBits;
         uint8_t tlb[tlbSize];
@@ -217,9 +216,7 @@ static void compress_frames(int width, int height, int centiSeconds, MetaPalette
         write_u8(&buf, 0x21); //extension introducer
         write_u8(&buf, 0xF9); //extension identifier
         write_u8(&buf, 4); //block size (always 4)
-        //reserved, disposal method:keep, input flag, transparency flag
-        //NOTE: MSVC incorrectly generates warning C4806 here due to a compiler bug.
-        write_u8(&buf, 0b00000100 | (frameIdx != 1)); //000 001 0 0
+        write_u8(&buf, 0b00000100); //000 001 0 0    reserved, disposal method: keep, input flag, transparency flag
         write_u16(&buf, centiSeconds); //x/100 seconds per frame
         write_u8(&buf, 0); //transparent color index
         write_u8(&buf, 0); //block terminator
@@ -247,9 +244,9 @@ static void compress_frames(int width, int height, int centiSeconds, MetaPalette
 
         uint8_t idxBuffer[4096];
         int idxLen = 0;
-        int lastCode = cframe[0] == pframe[0]? 0 : tlb[cframe[0]];
+        int lastCode = tlb[cframe[0]];
         for (int i = 1; i < width * height; ++i) {
-            idxBuffer[idxLen++] = cframe[i] == pframe[i]? 0 : tlb[cframe[i]];
+            idxBuffer[idxLen++] = tlb[cframe[i]];
             int code = (&lzw.data[lastCode * lzw.stride])[idxBuffer[idxLen - 1]];
             if (code < 0) {
                 //write to code stream
@@ -305,19 +302,16 @@ static void compress_frames(int width, int height, int centiSeconds, MetaPalette
 size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount, int width, int height, int centiSeconds, const char * path)
 {
     //allocate space for cooked frames
-    int cookedFrameCount = rawFrameCount + 1;
     //TODO: regenerate these pointers implicitly on the fly, to save on stack space
-    uint32_t * cookedFrames[cookedFrameCount];
-    uint32_t * cookedMemBlock = (uint32_t *) malloc(cookedFrameCount * width * height * sizeof(uint32_t));
-    //set dummy frame to background color
-    memset(cookedMemBlock, 0, width * height * sizeof(uint32_t));
-    for (int i = 0; i < rawFrameCount + 1; ++i) {
+    uint32_t * cookedFrames[rawFrameCount];
+    uint32_t * cookedMemBlock = (uint32_t *) malloc(rawFrameCount * width * height * sizeof(uint32_t));
+    for (int i = 0; i < rawFrameCount; ++i) {
         cookedFrames[i] = cookedMemBlock + width * height * i;
     }
 
     MetaPaletteInfo meta = choose_meta_palette(rawFrames, rawFrameCount, cookedFrames, width, height);
     FileBuffer compressedFrames[rawFrameCount];
-    compress_frames(width, height, centiSeconds, meta, cookedFrames, compressedFrames, cookedFrameCount);
+    compress_frames(width, height, centiSeconds, meta, cookedFrames, compressedFrames, rawFrameCount);
 
     //header
     FileBuffer buf = create_file_buffer(2048);
@@ -343,7 +337,6 @@ size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount, int width, int heig
     write_u16(&buf, 0); //loop forever
     write_u8(&buf, 0); //block terminator
 
-    //TODO: maybe do this with a single allocation?
     for (int i = 0; i < rawFrameCount; ++i) {
         FileBuffer b = compressedFrames[i];
         check(&buf, b.head - b.block);

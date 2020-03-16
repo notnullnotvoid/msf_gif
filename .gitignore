@@ -4,3 +4,4 @@ out/
 new/
 giff
 *.dSYM
+*.xcodeproj
