@@ -1,13 +1,15 @@
-//TODO: combine rbits/gbits/bbits into a struct to reduce verbosity?
-
 #include "msf_gif.h"
 
 #include <string.h> //memcpy
 #include <stdio.h> //FILE ops (fopen, etc.)
 #include <stdlib.h> //malloc, etc.
 
-static int bit_log(int i) {
+static inline int bit_log(int i) {
     return 32 - __builtin_clz(i);
+}
+
+static inline int min(int a, int b) {
+    return a < b? a : b;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -37,18 +39,13 @@ static void check(FileBuffer * buf, size_t bytes) {
     buf->end = buf->block + size;
 }
 
-static void write_data(FileBuffer * buf, void * data, size_t bytes) {
+static inline void write_data(FileBuffer * buf, void * data, size_t bytes) {
     memcpy(buf->head, data, bytes);
     buf->head += bytes;
 }
 
-static void write_u8(FileBuffer * buf, uint8_t data) {
+static inline void write_u8(FileBuffer * buf, uint8_t data) {
     *buf->head++ = data;
-}
-
-static void write_u16(FileBuffer * buf, uint16_t data) {
-    *buf->head++ = data;
-    *buf->head++ = data >> 8;
 }
 
 static FileBuffer create_file_buffer(size_t bytes) {
@@ -73,6 +70,13 @@ static CookedFrame cook_frame(int width, int height, uint8_t * raw) {
     const int gbitdepths[] = { 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1 };
     const int bbitdepths[] = { 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1 };
 
+    const int ditherKernel[16] = {
+         0 << 4,  8 << 4,  2 << 4, 10 << 4,
+        12 << 4,  4 << 4, 14 << 4,  6 << 4,
+         3 << 4, 11 << 4,  1 << 4,  9 << 4,
+        15 << 4,  7 << 4, 13 << 4,  5 << 4,
+    };
+
     int pal = 0, count = 0;
     bool * used = (bool *) malloc((1 << 15) * sizeof(bool));
     uint32_t * cooked = (uint32_t *) malloc(width * height * sizeof(uint32_t));
@@ -82,11 +86,17 @@ static CookedFrame cook_frame(int width, int height, uint8_t * raw) {
         int paletteSize = 1 << (rbits + gbits + bbits);
         memset(used, 0, paletteSize * sizeof(bool));
 
-        //cook raw colors into indices
-        for (int i = 0; i < width * height; ++i) {
-            uint8_t * p = &raw[i * 4];
-            cooked[i] = p[2] >> (8 - bbits) << (rbits + gbits) | p[1] >> (8 - gbits) << rbits | p[0] >> (8 - rbits);
-            used[cooked[i]] = true; //mark colors
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                uint8_t * p = &raw[y * width * 4 + x * 4];
+                int dx = x & 3, dy = y & 3;
+                int k = ditherKernel[dy * 4 + dx];
+                cooked[y * width + x] =
+                    min(255, p[2] + (k >> bbits)) >> (8 - bbits) << (rbits + gbits) |
+                    min(255, p[1] + (k >> gbits)) >> (8 - gbits) <<  rbits          |
+                    min(255, p[0] + (k >> rbits)) >> (8 - rbits);
+                used[cooked[y * width + x]] = true; //mark colors
+            }
         }
 
         //count used colors
@@ -128,8 +138,6 @@ static void put_code(FileBuffer * buf, BlockBuffer * block, int bits, uint32_t c
     }
 }
 
-
-
 typedef struct {
     int16_t * data;
     size_t len;
@@ -141,8 +149,6 @@ static void reset(StridedList * lzw, int tableSize, int stride) {
     lzw->len = tableSize + 2;
     lzw->stride = stride;
 }
-
-
 
 static FileBuffer copmress_frame(int width, int height, int centiSeconds, CookedFrame frame) {
     FileBuffer buf = create_file_buffer(1024);
@@ -175,32 +181,30 @@ static FileBuffer copmress_frame(int width, int height, int centiSeconds, Cooked
     int tableBits = bit_log(tableIdx - 1);
     int tableSize = 1 << tableBits;
 
-    check(&buf, 8 + 10);
-    //graphics control extension
-    write_u8(&buf, 0x21); //extension introducer
-    write_u8(&buf, 0xF9); //extension identifier
-    write_u8(&buf, 4); //block size (always 4)
-    write_u8(&buf, 0b00000100); //000 001 0 0    reserved, disposal method: keep, input flag, transparency flag
-    write_u16(&buf, centiSeconds); //x/100 seconds per frame
-    write_u8(&buf, 0); //transparent color index
-    write_u8(&buf, 0); //block terminator
-
-    //image descriptor
-    write_u8(&buf, 0x2C); //image separator
-    write_u16(&buf, 0); //image left
-    write_u16(&buf, 0); //image top
-    write_u16(&buf, width);
-    write_u16(&buf, height);
-    //local color table flag, interlace flag, sort flag, reserved, local color table size
-    write_u8(&buf, 0b10000000 | (tableBits - 1)); //1 0 0 00 000
+    struct __attribute__((__packed__)) {
+        //graphics control extension
+        uint8_t extIntroducer, extIdentifier, blockSize, extFlags;
+        uint16_t centiSeconds;
+        uint8_t transparentColorIdx, blockTerminator;
+        //image descriptor
+        uint8_t imageSeparator;
+        uint16_t left, top, width, height;
+        uint8_t imgFlags;
+    } header = {
+        0x21, 0xF9, 4, 0x04, 0, 0, 0,
+        0x2C, 0, 0, 0, 0, 0x80,
+    };
+    header.centiSeconds = centiSeconds;
+    header.width = width;
+    header.height = height;
+    header.imgFlags |= tableBits - 1;
+    write_data(&buf, &header, sizeof(header));
 
     //local color table
-    check(&buf, tableSize * sizeof(Color3));
     write_data(&buf, table, tableSize * sizeof(Color3));
 
     //image data
     BlockBuffer block = {};
-    check(&buf, 1);
     write_u8(&buf, tableBits);
     reset(&lzw, tableSize, tableIdx);
 
@@ -273,29 +277,26 @@ size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount, int width, int heig
         compressedFrames[i] = copmress_frame(width, height, centiSeconds, cookedFrames[i]);
     }
 
-    //header
+    struct __attribute__((__packed__)) {
+        char header[6];
+        //logical screen descriptor
+        uint16_t width, height;
+        uint8_t flags, bgColorIdx, pixelAspectRatio;
+        //application extension
+        uint8_t extIntroducer, extIdentifier, extDataSize;
+        char extData[11];
+        uint8_t dataBlockSize, idk;
+        uint16_t loopFlag;
+        uint8_t blockTerminator;
+    } header = {
+        { 'G', 'I', 'F', '8', '9', 'a' },
+        0, 0, 0x10, 0, 0,
+        0x21, 0xFF, 11, { 'N', 'E', 'T', 'S', 'C', 'A', 'P', 'E', '2', '.', '0' }, 3, 1, 0, 0
+    };
+    header.width = width;
+    header.height = height;
     FileBuffer buf = create_file_buffer(2048);
-    for (const char * c = "GIF89a"; *c != '\0'; ++c)
-        write_u8(&buf, *c);
-
-    //logical screen descriptor
-    write_u16(&buf, width);
-    write_u16(&buf, height);
-    //global color table flag, color resolution (???), sort flag, global color table size
-    write_u8(&buf, 0b00010000); //0 001 0 000
-    write_u8(&buf, 0); //background color index
-    write_u8(&buf, 0); //pixel aspect ratio
-
-    //application extension
-    write_u8(&buf, 0x21); //extension introducer
-    write_u8(&buf, 0xFF); //extension identifier
-    write_u8(&buf, 11); //fixed length data size
-    for (const char * c = "NETSCAPE2.0"; *c != '\0'; ++c)
-        write_u8(&buf, *c);
-    write_u8(&buf, 3); //data block size
-    write_u8(&buf, 1); //???
-    write_u16(&buf, 0); //loop forever
-    write_u8(&buf, 0); //block terminator
+    write_data(&buf, &header, sizeof(header));
 
     for (int i = 0; i < rawFrameCount; ++i) {
         FileBuffer b = compressedFrames[i];
