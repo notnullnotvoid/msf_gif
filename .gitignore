@@ -5,3 +5,4 @@ new/
 giff
 *.dSYM
 *.xcodeproj
+*.o
