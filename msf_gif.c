@@ -98,15 +98,22 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, uint8_t *
         int paletteSize = 1 << (rbits + gbits + bbits);
         memset(used, 0, paletteSize * sizeof(bool));
 
+        int rdiff = (1 << (8 - rbits)) - 1;
+        int gdiff = (1 << (8 - gbits)) - 1;
+        int bdiff = (1 << (8 - bbits)) - 1;
+        int rmul = (255.0f - rdiff) / 255.0f * 129;
+        int gmul = (255.0f - gdiff) / 255.0f * 129;
+        int bmul = (255.0f - bdiff) / 255.0f * 129;
+
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
                 uint8_t * p = &raw[y * pitchInBytes + x * 4];
                 int dx = x & 3, dy = y & 3;
                 int k = ditherKernel[dy * 4 + dx];
                 cooked[y * width + x] =
-                    max(0, min(255, p[2] - (127 >> bbits) + (k >> bbits))) >> (8 - bbits) << (rbits + gbits) |
-                    max(0, min(255, p[1] - (127 >> gbits) + (k >> gbits))) >> (8 - gbits) <<  rbits          |
-                    max(0, min(255, p[0] - (127 >> rbits) + (k >> rbits))) >> (8 - rbits);
+                    min(255, (p[2] * bmul >> 7) + (k >> bbits)) >> (8 - bbits) << (rbits + gbits) |
+                    min(255, (p[1] * gmul >> 7) + (k >> gbits)) >> (8 - gbits) <<  rbits          |
+                    min(255, (p[0] * rmul >> 7) + (k >> rbits)) >> (8 - rbits);
                 used[cooked[y * width + x]] = true; //mark colors
             }
         }
@@ -189,15 +196,9 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
             g <<= 8 - frame.gbits;
             b <<= 8 - frame.bbits;
             table[tableIdx++] = (Color3) {
-                // (uint8_t) (r | r >> frame.rbits | r >> (frame.rbits * 2)),
-                // (uint8_t) (g | g >> frame.gbits | g >> (frame.gbits * 2)),
-                // (uint8_t) (b | b >> frame.bbits | b >> (frame.bbits * 2)),
-                // (uint8_t) (r | r >> frame.rbits),
-                // (uint8_t) (g | g >> frame.gbits),
-                // (uint8_t) (b | b >> frame.bbits),
-                (uint8_t) r | 1 << (7 - frame.rbits),
-                (uint8_t) g | 1 << (7 - frame.gbits),
-                (uint8_t) b | 1 << (7 - frame.bbits),
+                (uint8_t) (r | r >> frame.rbits | r >> (frame.rbits * 2) | r >> (frame.rbits * 3)),
+                (uint8_t) (g | g >> frame.gbits | g >> (frame.gbits * 2) | g >> (frame.gbits * 3)),
+                (uint8_t) (b | b >> frame.bbits | b >> (frame.bbits * 2) | b >> (frame.bbits * 3)),
             };
         }
     }
