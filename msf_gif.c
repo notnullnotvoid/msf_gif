@@ -12,10 +12,6 @@ static inline int min(int a, int b) {
     return a < b? a : b;
 }
 
-static inline int max(int a, int b) {
-    return b < a? a : b;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 /// FileBuffer                                                               ///
 ////////////////////////////////////////////////////////////////////////////////
@@ -73,10 +69,6 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, uint8_t *
     const int rbitdepths[] = { 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1 };
     const int gbitdepths[] = { 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1 };
     const int bbitdepths[] = { 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1 };
-
-    // const int rbitdepths[] = { 5, 5, 4, 4, 3, 3, 2, 2, 1 };
-    // const int gbitdepths[] = { 5, 5, 4, 4, 3, 3, 2, 2, 1 };
-    // const int bbitdepths[] = { 5, 4, 4, 3, 3, 2, 2, 1, 1 };
 
     // const int rbitdepths[] = { 5, 4, 3, 2, 1 };
     // const int gbitdepths[] = { 5, 4, 3, 2, 1 };
@@ -169,7 +161,7 @@ static void reset(StridedList * lzw, int tableSize, int stride) {
     lzw->stride = stride;
 }
 
-static FileBuffer compress_frame(int width, int height, int centiSeconds, CookedFrame frame) {
+static FileBuffer compress_frame(int width, int height, int centiSeconds, CookedFrame frame, CookedFrame previous) {
     FileBuffer buf = create_file_buffer(1024);
     StridedList lzw = { (int16_t *) malloc(4096 * 256 * sizeof(int16_t)) };
 
@@ -219,6 +211,8 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
         0x21, 0xF9, 4, 0x04, 0, 0, 0,
         0x2C, 0, 0, 0, 0, 0x80,
     };
+    bool diff = frame.rbits == previous.rbits && frame.gbits == previous.gbits && frame.bbits == previous.bbits;
+    header.extFlags |= diff;
     header.centiSeconds = centiSeconds;
     header.width = width;
     header.height = height;
@@ -235,9 +229,9 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
 
     uint8_t idxBuffer[4096];
     int idxLen = 0;
-    int lastCode = tlb[frame.pixels[0]];
+    int lastCode = diff && frame.pixels[0] == previous.pixels[0]? 0 : tlb[frame.pixels[0]];
     for (int i = 1; i < width * height; ++i) {
-        idxBuffer[idxLen++] = tlb[frame.pixels[i]];
+        idxBuffer[idxLen++] = diff && frame.pixels[i] == previous.pixels[i]? 0 : tlb[frame.pixels[i]];
         int code = (&lzw.data[lastCode * lzw.stride])[idxBuffer[idxLen - 1]];
         if (code < 0) {
             //write to code stream
@@ -299,8 +293,9 @@ size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount,
     }
 
     FileBuffer * compressedFrames = (FileBuffer *) malloc(rawFrameCount * sizeof(FileBuffer));
-    for (int i = 0; i < rawFrameCount; ++i) {
-        compressedFrames[i] = compress_frame(width, height, centiSeconds, cookedFrames[i]);
+    compressedFrames[0] = compress_frame(width, height, centiSeconds, cookedFrames[0], (CookedFrame) {});
+    for (int i = 1; i < rawFrameCount; ++i) {
+        compressedFrames[i] = compress_frame(width, height, centiSeconds, cookedFrames[i], cookedFrames[i - 1]);
     }
 
     struct __attribute__((__packed__)) {
