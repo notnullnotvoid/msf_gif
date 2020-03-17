@@ -12,6 +12,10 @@ static inline int min(int a, int b) {
     return a < b? a : b;
 }
 
+static inline int max(int a, int b) {
+    return b < a? a : b;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 /// FileBuffer                                                               ///
 ////////////////////////////////////////////////////////////////////////////////
@@ -64,11 +68,19 @@ typedef struct {
     int rbits, gbits, bbits;
 } CookedFrame;
 
-static CookedFrame cook_frame(int width, int height, uint8_t * raw) {
+static CookedFrame cook_frame(int width, int height, int pitchInBytes, uint8_t * raw) {
     //bit depth for each channel
     const int rbitdepths[] = { 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1 };
     const int gbitdepths[] = { 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1 };
     const int bbitdepths[] = { 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1 };
+
+    // const int rbitdepths[] = { 5, 5, 4, 4, 3, 3, 2, 2, 1 };
+    // const int gbitdepths[] = { 5, 5, 4, 4, 3, 3, 2, 2, 1 };
+    // const int bbitdepths[] = { 5, 4, 4, 3, 3, 2, 2, 1, 1 };
+
+    // const int rbitdepths[] = { 5, 4, 3, 2, 1 };
+    // const int gbitdepths[] = { 5, 4, 3, 2, 1 };
+    // const int bbitdepths[] = { 5, 4, 3, 2, 1 };
 
     const int ditherKernel[16] = {
          0 << 4,  8 << 4,  2 << 4, 10 << 4,
@@ -88,13 +100,13 @@ static CookedFrame cook_frame(int width, int height, uint8_t * raw) {
 
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
-                uint8_t * p = &raw[y * width * 4 + x * 4];
+                uint8_t * p = &raw[y * pitchInBytes + x * 4];
                 int dx = x & 3, dy = y & 3;
                 int k = ditherKernel[dy * 4 + dx];
                 cooked[y * width + x] =
-                    min(255, p[2] + (k >> bbits)) >> (8 - bbits) << (rbits + gbits) |
-                    min(255, p[1] + (k >> gbits)) >> (8 - gbits) <<  rbits          |
-                    min(255, p[0] + (k >> rbits)) >> (8 - rbits);
+                    max(0, min(255, p[2] - (127 >> bbits) + (k >> bbits))) >> (8 - bbits) << (rbits + gbits) |
+                    max(0, min(255, p[1] - (127 >> gbits) + (k >> gbits))) >> (8 - gbits) <<  rbits          |
+                    max(0, min(255, p[0] - (127 >> rbits) + (k >> rbits))) >> (8 - rbits);
                 used[cooked[y * width + x]] = true; //mark colors
             }
         }
@@ -150,7 +162,7 @@ static void reset(StridedList * lzw, int tableSize, int stride) {
     lzw->stride = stride;
 }
 
-static FileBuffer copmress_frame(int width, int height, int centiSeconds, CookedFrame frame) {
+static FileBuffer compress_frame(int width, int height, int centiSeconds, CookedFrame frame) {
     FileBuffer buf = create_file_buffer(1024);
     StridedList lzw = { (int16_t *) malloc(4096 * 256 * sizeof(int16_t)) };
 
@@ -172,9 +184,21 @@ static FileBuffer copmress_frame(int width, int height, int centiSeconds, Cooked
             int r = i & rmask;
             int g = i >> frame.rbits & gmask;
             int b = i >> (frame.rbits + frame.gbits);
-            table[tableIdx++] = (Color3) { (uint8_t) (r << (8 - frame.rbits)),
-                                           (uint8_t) (g << (8 - frame.gbits)),
-                                           (uint8_t) (b << (8 - frame.bbits)) };
+            //shift into highest bits
+            r <<= 8 - frame.rbits;
+            g <<= 8 - frame.gbits;
+            b <<= 8 - frame.bbits;
+            table[tableIdx++] = (Color3) {
+                // (uint8_t) (r | r >> frame.rbits | r >> (frame.rbits * 2)),
+                // (uint8_t) (g | g >> frame.gbits | g >> (frame.gbits * 2)),
+                // (uint8_t) (b | b >> frame.bbits | b >> (frame.bbits * 2)),
+                // (uint8_t) (r | r >> frame.rbits),
+                // (uint8_t) (g | g >> frame.gbits),
+                // (uint8_t) (b | b >> frame.bbits),
+                (uint8_t) r | 1 << (7 - frame.rbits),
+                (uint8_t) g | 1 << (7 - frame.gbits),
+                (uint8_t) b | 1 << (7 - frame.bbits),
+            };
         }
     }
 
@@ -265,16 +289,17 @@ static FileBuffer copmress_frame(int width, int height, int centiSeconds, Cooked
 /// Drivers                                                                  ///
 ////////////////////////////////////////////////////////////////////////////////
 
-size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount, int width, int height, int centiSeconds, const char * path)
+size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount,
+    int width, int height, int pitchInBytes, int centiSeconds, const char * path)
 {
     CookedFrame * cookedFrames = (CookedFrame *) malloc(rawFrameCount * sizeof(CookedFrame));
     for (int i = 0; i < rawFrameCount; ++i) {
-        cookedFrames[i] = cook_frame(width, height, rawFrames[i]);
+        cookedFrames[i] = cook_frame(width, height, pitchInBytes, rawFrames[i]);
     }
 
     FileBuffer * compressedFrames = (FileBuffer *) malloc(rawFrameCount * sizeof(FileBuffer));
     for (int i = 0; i < rawFrameCount; ++i) {
-        compressedFrames[i] = copmress_frame(width, height, centiSeconds, cookedFrames[i]);
+        compressedFrames[i] = compress_frame(width, height, centiSeconds, cookedFrames[i]);
     }
 
     struct __attribute__((__packed__)) {
