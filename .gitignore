@@ -6,3 +6,4 @@ giff
 *.dSYM
 *.xcodeproj
 *.o
+trace.json

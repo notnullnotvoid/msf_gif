@@ -2,20 +2,9 @@
 
 // #include "giff.h"
 #include "msf_gif.h"
+#include "trace.hpp"
 #include "List.hpp"
 #include "common.hpp"
-
-#include <stdio.h>
-#include <SDL2/SDL.h>
-
-u64 applicationStartupTimeValue;
-
-extern "C" double get_time() {
-    u64 currentTimeValue = SDL_GetPerformanceCounter();
-    u64 diffTimeValue = currentTimeValue - applicationStartupTimeValue;
-    double elapsedSeconds = (double)diffTimeValue / (double)SDL_GetPerformanceFrequency();
-    return elapsedSeconds;
-}
 
 struct RawBlob {
     int width, height, frames, centiSeconds;
@@ -25,11 +14,11 @@ struct RawBlob {
 // #include <unistd.h>
 
 int main() {
-    applicationStartupTimeValue = SDL_GetPerformanceCounter();
     // printf("logical cores available: %ld\n", sysconf(_SC_NPROC/ESSORS_ONLN));
     const char * names[] = {
         "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "odd", "tiles",
-        "anchor", "always-in-front", "flip"
+        "anchor", "always-in-front", "flip",
+        "sky",
     };
     // const char * names[] = { "bouncy", "diwide", "increase" };
 
@@ -45,6 +34,7 @@ int main() {
         size_t in, out;
     };
     List<TimerInfo> timers = {};
+    init_profiling_trace();
 
     //TODO: write both dithered and non-dithered versions each to their own folder?
     //TODO: automatically regression-test against known good versions of the GIFs?
@@ -55,21 +45,17 @@ int main() {
 
         List<uint8_t *> frames = {};
         for (int j = 0; j < blob->frames; ++j) {
-            if (flipped) {
-                frames.add((u8 *) &blob->pixels[blob->width * blob->height * j + blob->width * (blob->height - 1)]);
-            } else {
-                frames.add((u8 *) &blob->pixels[blob->width * blob->height * j]);
-            }
+            frames.add((u8 *) &blob->pixels[blob->width * blob->height * j]);
         }
 
         //write gifs using the new algorithm
         char * path = dsprintf(nullptr, "new/%s.gif", names[i]);
+        TimeScope(path);
         printf("writing %24s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
             path, blob->width, blob->height, blob->frames, blob->centiSeconds); fflush(stdout);
         double pre = get_time();
         size_t out;
-        out = msf_save_gif(frames.data, frames.len,
-            blob->width, blob->height, flipped? blob->width * -4 : blob->width * 4, blob->centiSeconds, path);
+        out = msf_save_gif(frames.data, frames.len, blob->width, blob->height, flipped, blob->centiSeconds, 20, path);
         timers.add({ get_time() - pre, (size_t)(blob->frames * blob->width * blob->height * 4), out });
     }
 
@@ -86,5 +72,7 @@ int main() {
     printf("\n%16s      time: %6.3f   in: %4.2f GB/s   out: %5.2f MB/s\n",
         "totals", totals.time, totals.in / totals.time / 1024 / 1024 / 1024, totals.out / totals.time / 1024 / 1024);
 
+    trace_end_event("main");
+    print_profiling_trace();
     return 0;
 }

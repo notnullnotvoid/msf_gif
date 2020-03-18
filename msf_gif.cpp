@@ -4,13 +4,11 @@
 #include <stdio.h> //FILE ops (fopen, etc.)
 #include <stdlib.h> //malloc, etc.
 
-static inline int bit_log(int i) {
-    return 32 - __builtin_clz(i);
-}
+#include "trace.hpp"
 
-static inline int min(int a, int b) {
-    return a < b? a : b;
-}
+static inline int bit_log(int i) { return 32 - __builtin_clz(i); }
+static inline int min(int a, int b) { return a < b? a : b; }
+static inline int max(int a, int b) { return b < a? a : b; }
 
 ////////////////////////////////////////////////////////////////////////////////
 /// FileBuffer                                                               ///
@@ -64,15 +62,17 @@ typedef struct {
     int rbits, gbits, bbits;
 } CookedFrame;
 
-static CookedFrame cook_frame(int width, int height, int pitchInBytes, uint8_t * raw) {
+static CookedFrame cook_frame(int width, int height, int pitchInBytes, int quality, uint8_t * raw) { TimeFunc
     //bit depth for each channel
-    const int rbitdepths[] = { 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1 };
-    const int gbitdepths[] = { 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1 };
-    const int bbitdepths[] = { 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1 };
+    const int rbitdepths[13] = { 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1 };
+    const int gbitdepths[13] = { 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1 };
+    const int bbitdepths[13] = { 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1 };
+    int pal = 12 - max(0, min(12, quality));
 
-    // const int rbitdepths[] = { 5, 4, 3, 2, 1 };
-    // const int gbitdepths[] = { 5, 4, 3, 2, 1 };
-    // const int bbitdepths[] = { 5, 4, 3, 2, 1 };
+    // const int rbitdepths[5] = { 5, 4, 3, 2, 1 };
+    // const int gbitdepths[5] = { 5, 4, 3, 2, 1 };
+    // const int bbitdepths[5] = { 5, 4, 3, 2, 1 };
+    // int pal = 4 - max(0, min(4, quality));
 
     const int ditherKernel[16] = {
          0 << 4,  8 << 4,  2 << 4, 10 << 4,
@@ -81,11 +81,10 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, uint8_t *
         15 << 4,  7 << 4, 13 << 4,  5 << 4,
     };
 
-    int pal = 0, count = 0;
     bool * used = (bool *) malloc((1 << 15) * sizeof(bool));
     uint32_t * cooked = (uint32_t *) malloc(width * height * sizeof(uint32_t));
-
-    do {
+    int count = 0;
+    TimeLoop("do") do {
         int rbits = rbitdepths[pal], gbits = gbitdepths[pal], bbits = bbitdepths[pal];
         int paletteSize = 1 << (rbits + gbits + bbits);
         memset(used, 0, paletteSize * sizeof(bool));
@@ -97,7 +96,7 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, uint8_t *
         int gmul = (255.0f - gdiff) / 255.0f * 129;
         int bmul = (255.0f - bdiff) / 255.0f * 129;
 
-        for (int y = 0; y < height; ++y) {
+        TimeLoop("cook") for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
                 uint8_t * p = &raw[y * pitchInBytes + x * 4];
                 int dx = x & 3, dy = y & 3;
@@ -112,7 +111,7 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, uint8_t *
 
         //count used colors
         count = 0;
-        for (int j = 0; j < paletteSize; ++j) {
+        TimeLoop("count") for (int j = 0; j < paletteSize; ++j) {
             count += used[j];
         }
     } while (count >= 256 && ++pal);
@@ -161,7 +160,8 @@ static void reset(StridedList * lzw, int tableSize, int stride) {
     lzw->stride = stride;
 }
 
-static FileBuffer compress_frame(int width, int height, int centiSeconds, CookedFrame frame, CookedFrame previous) {
+static FileBuffer compress_frame(int width, int height, int centiSeconds, CookedFrame frame, CookedFrame previous)
+{ TimeFunc
     FileBuffer buf = create_file_buffer(1024);
     StridedList lzw = { (int16_t *) malloc(4096 * 256 * sizeof(int16_t)) };
 
@@ -174,7 +174,7 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
     typedef struct { uint8_t r, g, b; } Color3;
     Color3 table[256] = {};
     int tableIdx = 1; //we start counting at 1 because 0 is the transparent color
-    for (int i = 0; i < tlbSize; ++i) {
+    TimeLoop("table") for (int i = 0; i < tlbSize; ++i) {
         if (frame.used[i]) {
             tlb[i] = tableIdx;
             int rmask = (1 << frame.rbits) - 1;
@@ -230,7 +230,7 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
     uint8_t idxBuffer[4096];
     int idxLen = 0;
     int lastCode = diff && frame.pixels[0] == previous.pixels[0]? 0 : tlb[frame.pixels[0]];
-    for (int i = 1; i < width * height; ++i) {
+    TimeLoop("compress") for (int i = 1; i < width * height; ++i) {
         idxBuffer[idxLen++] = diff && frame.pixels[i] == previous.pixels[i]? 0 : tlb[frame.pixels[i]];
         int code = (&lzw.data[lastCode * lzw.stride])[idxBuffer[idxLen - 1]];
         if (code < 0) {
@@ -284,19 +284,22 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
 /// Drivers                                                                  ///
 ////////////////////////////////////////////////////////////////////////////////
 
-size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount,
-    int width, int height, int pitchInBytes, int centiSeconds, const char * path)
-{
-    CookedFrame * cookedFrames = (CookedFrame *) malloc(rawFrameCount * sizeof(CookedFrame));
-    for (int i = 0; i < rawFrameCount; ++i) {
-        cookedFrames[i] = cook_frame(width, height, pitchInBytes, rawFrames[i]);
-    }
+typedef struct {
+    FILE * fp;
+    CookedFrame previousFrame;
+    int width, height, centiSeconds, pitchInBytes, quality;
+} GifState;
 
-    FileBuffer * compressedFrames = (FileBuffer *) malloc(rawFrameCount * sizeof(FileBuffer));
-    compressedFrames[0] = compress_frame(width, height, centiSeconds, cookedFrames[0], (CookedFrame) {});
-    for (int i = 1; i < rawFrameCount; ++i) {
-        compressedFrames[i] = compress_frame(width, height, centiSeconds, cookedFrames[i], cookedFrames[i - 1]);
-    }
+void * msf_begin_gif(const char * path, int width, int height, int centiSecondsPerFrame, int quality, bool upsideDown)
+{ TimeFunc
+    GifState * state = (GifState *) malloc(sizeof(GifState));
+    state->fp = fopen(path, "wb");
+    state->previousFrame = (CookedFrame) {};
+    state->width = width;
+    state->height = height;
+    state->centiSeconds = centiSecondsPerFrame;
+    state->pitchInBytes = upsideDown? -width * 4 : width * 4;
+    state->quality = quality;
 
     struct __attribute__((__packed__)) {
         char header[6];
@@ -316,31 +319,40 @@ size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount,
     };
     header.width = width;
     header.height = height;
-    FileBuffer buf = create_file_buffer(2048);
-    write_data(&buf, &header, sizeof(header));
+    fwrite(&header, sizeof(header), 1, state->fp);
 
-    for (int i = 0; i < rawFrameCount; ++i) {
-        FileBuffer b = compressedFrames[i];
-        check(&buf, b.head - b.block);
-        write_data(&buf, b.block, b.head - b.block);
-        free(b.block);
-    }
+    return state;
+}
 
-    check(&buf, 1);
-    write_u8(&buf, 0x3B); //trailing marker
-
-    //write data to file
-    FILE * fp = fopen(path, "wb");
-    fwrite(buf.block, buf.head - buf.block, 1, fp);
-    fclose(fp);
-
-    //cleanup
+void msf_gif_frame(void * handle, uint8_t * pixels) { TimeFunc
+    GifState * state = (GifState *) handle;
+    uint8_t * raw = state->pitchInBytes > 0? pixels : &pixels[state->width * (state->height - 1) * 4];
+    CookedFrame frame = cook_frame(state->width, state->height, state->pitchInBytes, state->quality, raw);
+    FileBuffer buf = compress_frame(state->width, state->height, state->centiSeconds, frame, state->previousFrame);
+    fwrite(buf.block, buf.head - buf.block, 1, state->fp);
     free(buf.block);
-    for (int i = 0; i < rawFrameCount; ++i) {
-        free(cookedFrames[i].pixels);
-        free(cookedFrames[i].used);
-    }
-    free(cookedFrames);
+    free(frame.used);
+    free(state->previousFrame.pixels);
+    state->previousFrame = frame;
+}
 
-    return buf.head - buf.block;
+size_t msf_end_gif(void * handle) { TimeFunc
+    GifState * state = (GifState *) handle;
+    uint8_t trailingMarker = 0x3B;
+    fwrite(&trailingMarker, 1, 1, state->fp);
+    size_t bytesWritten = ftell(state->fp);
+    fclose(state->fp);
+    free(state->previousFrame.pixels);
+    free(state);
+    return bytesWritten;
+}
+
+size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount,
+    int width, int height, bool flipOutput, int centiSeconds, int quality, const char * path)
+{ TimeFunc
+    void * handle = msf_begin_gif(path, width, height, centiSeconds, quality, flipOutput);
+    for (int i = 0; i < rawFrameCount; ++i) {
+        msf_gif_frame(handle, rawFrames[i]);
+    }
+    return msf_end_gif(handle);
 }
