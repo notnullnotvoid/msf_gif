@@ -62,11 +62,13 @@ typedef struct {
     int rbits, gbits, bbits;
 } CookedFrame;
 
+#include <emmintrin.h>
+
 static CookedFrame cook_frame(int width, int height, int pitchInBytes, int quality, uint8_t * raw) { TimeFunc
     //bit depth for each channel
-    const int rbitdepths[13] = { 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1 };
-    const int gbitdepths[13] = { 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1 };
-    const int bbitdepths[13] = { 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1 };
+    const static int rbitdepths[13] = { 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1 };
+    const static int gbitdepths[13] = { 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1 };
+    const static int bbitdepths[13] = { 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1 };
     int pal = 12 - max(0, min(12, quality));
 
     // const int rbitdepths[5] = { 5, 4, 3, 2, 1 };
@@ -74,11 +76,11 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int quali
     // const int bbitdepths[5] = { 5, 4, 3, 2, 1 };
     // int pal = 4 - max(0, min(4, quality));
 
-    const int ditherKernel[16] = {
-         0 << 4,  8 << 4,  2 << 4, 10 << 4,
-        12 << 4,  4 << 4, 14 << 4,  6 << 4,
-         3 << 4, 11 << 4,  1 << 4,  9 << 4,
-        15 << 4,  7 << 4, 13 << 4,  5 << 4,
+    const static int ditherKernel[16] = {
+         0 << 12,  8 << 12,  2 << 12, 10 << 12,
+        12 << 12,  4 << 12, 14 << 12,  6 << 12,
+         3 << 12, 11 << 12,  1 << 12,  9 << 12,
+        15 << 12,  7 << 12, 13 << 12,  5 << 12,
     };
 
     bool * used = (bool *) malloc((1 << 15) * sizeof(bool));
@@ -92,20 +94,74 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int quali
         int rdiff = (1 << (8 - rbits)) - 1;
         int gdiff = (1 << (8 - gbits)) - 1;
         int bdiff = (1 << (8 - bbits)) - 1;
-        int rmul = (255.0f - rdiff) / 255.0f * 129;
-        int gmul = (255.0f - gdiff) / 255.0f * 129;
-        int bmul = (255.0f - bdiff) / 255.0f * 129;
+        int rmul = (255.0f - rdiff) / 255.0f * 257;
+        int gmul = (255.0f - gdiff) / 255.0f * 257;
+        int bmul = (255.0f - bdiff) / 255.0f * 257;
+
+        int gmask = ((1 << gbits) - 1) << rbits;
+        int bmask = ((1 << bbits) - 1) << rbits << gbits;
 
         TimeLoop("cook") for (int y = 0; y < height; ++y) {
-            for (int x = 0; x < width; ++x) {
+            int x = 0;
+            //SIMD loop
+            __m128i k = _mm_loadu_si128((__m128i *) &ditherKernel[(y & 3) * 4]);
+            __m128i k2 = _mm_or_si128(_mm_srli_epi32(k, rbits), _mm_slli_epi32(_mm_srli_epi32(k, bbits), 16));
+            // TimeLoop("SIMD")
+            for (; x < width - 3; x += 4) {
+                uint8_t * pixels = &raw[y * pitchInBytes + x * 4];
+                __m128i p = _mm_loadu_si128((__m128i *) pixels);
+#if 0
+                __m128i r = _mm_and_si128(p, _mm_set1_epi32(0x000000FF));
+                __m128i r1 = _mm_mullo_epi16(r, _mm_set1_epi32(rmul));
+                __m128i r2 = _mm_adds_epu16(r1, _mm_srli_epi32(k, rbits));
+                __m128i r3 = _mm_srli_epi32(r2, 16 - rbits);
+
+                __m128i g = _mm_and_si128(_mm_srli_epi32(p, 8), _mm_set1_epi32(0x000000FF));
+                __m128i g1 = _mm_mullo_epi16(g, _mm_set1_epi32(gmul));
+                __m128i g2 = _mm_adds_epu16(g1, _mm_srli_epi32(k, gbits));
+                __m128i g3 = _mm_and_si128(_mm_srli_epi32(g2, 16 - rbits - gbits), _mm_set1_epi32(gmask));
+
+                __m128i b = _mm_and_si128(_mm_srli_epi32(p, 16), _mm_set1_epi32(0x000000FF));
+                __m128i b1 = _mm_mullo_epi16(b, _mm_set1_epi32(bmul));
+                __m128i b2 = _mm_adds_epu16(b1, _mm_srli_epi32(k, bbits));
+                __m128i b3 = _mm_and_si128(_mm_srli_epi32(b2, 16 - rbits - gbits - bbits), _mm_set1_epi32(bmask));
+#else
+                __m128i rb = _mm_and_si128(p, _mm_set1_epi32(0x00FF00FF));
+                __m128i rb1 = _mm_mullo_epi16(rb, _mm_set_epi16(bmul, rmul, bmul, rmul, bmul, rmul, bmul, rmul));
+                __m128i rb2 = _mm_adds_epu16(rb1, k2);
+                __m128i r3 = _mm_srli_epi32(_mm_and_si128(rb2, _mm_set1_epi32(0x0000FFFF)), 16 - rbits);
+                __m128i b3 = _mm_and_si128(_mm_srli_epi32(rb2, 32 - rbits - gbits - bbits), _mm_set1_epi32(bmask));
+
+                __m128i g = _mm_and_si128(_mm_srli_epi32(p, 8), _mm_set1_epi32(0x000000FF));
+                __m128i g1 = _mm_mullo_epi16(g, _mm_set1_epi32(gmul));
+                __m128i g2 = _mm_adds_epu16(g1, _mm_srli_epi32(k, gbits));
+                __m128i g3 = _mm_and_si128(_mm_srli_epi32(g2, 16 - rbits - gbits), _mm_set1_epi32(gmask));
+#endif
+                //TODO: does storing this as a __m128i then reading it back as a uint32_t violate strict aliasing?
+                uint32_t * c = &cooked[y * width + x];
+                __m128i out = _mm_or_si128(_mm_or_si128(r3, g3), b3);
+                _mm_storeu_si128((__m128i *) c, out);
+            }
+
+            //scalar cleanup loop
+            // TimeLoop("scalar")
+            for (; x < width; ++x) {
                 uint8_t * p = &raw[y * pitchInBytes + x * 4];
                 int dx = x & 3, dy = y & 3;
                 int k = ditherKernel[dy * 4 + dx];
                 cooked[y * width + x] =
-                    min(255, (p[2] * bmul >> 7) + (k >> bbits)) >> (8 - bbits) << (rbits + gbits) |
-                    min(255, (p[1] * gmul >> 7) + (k >> gbits)) >> (8 - gbits) <<  rbits          |
-                    min(255, (p[0] * rmul >> 7) + (k >> rbits)) >> (8 - rbits);
-                used[cooked[y * width + x]] = true; //mark colors
+                    // min(65535, p[2] * bmul + (k >> bbits)) >> (16 - bbits) << (rbits + gbits) |
+                    // min(65535, p[1] * gmul + (k >> gbits)) >> (16 - gbits) <<  rbits          |
+                    // min(65535, p[0] * rmul + (k >> rbits)) >> (16 - rbits);
+                    (min(65535, p[2] * bmul + (k >> bbits)) >> (16 - rbits - gbits - bbits) & bmask) |
+                    (min(65535, p[1] * gmul + (k >> gbits)) >> (16 - rbits - gbits        ) & gmask) |
+                     min(65535, p[0] * rmul + (k >> rbits)) >> (16 - rbits                );
+            }
+
+            //mark used colors
+            // TimeLoop("mark used")
+            for (int x = 0; x < width; ++x) {
+                used[cooked[y * width + x]] = true;
             }
         }
 
@@ -128,7 +184,7 @@ typedef struct {
     uint16_t bytes[129];
 } BlockBuffer;
 
-static void put_code(FileBuffer * buf, BlockBuffer * block, int bits, uint32_t code) {
+static inline void put_code(FileBuffer * buf, BlockBuffer * block, int bits, uint32_t code) {
     //insert new code into block buffer
     int idx = block->bits / 16;
     int bit = block->bits % 16;
@@ -154,7 +210,7 @@ typedef struct {
     size_t stride;
 } StridedList;
 
-static void reset(StridedList * lzw, int tableSize, int stride) {
+static inline void reset(StridedList * lzw, int tableSize, int stride) { //TimeFunc
     memset(lzw->data, 0xFF, 4096 * stride * sizeof(int16_t));
     lzw->len = tableSize + 2;
     lzw->stride = stride;

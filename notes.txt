@@ -1,84 +1,43 @@
 
-
-allow "immediate mode" (frame-by-frame) export
-	return opaque pointer to struct containing persistent state (no global data)
-	limited ability for immediate-mode payoff because all frames must be cooked before any can be compressed
-		allow compressing one-at-a-time to avoid long stalls?
-			or just make it so damn fast that it doesn't matter :^)
-
-true-color???
-	bitfield for color tracker?
-
-detecting user error? (i.e. invalid parameters)
-
-
-
 TODO:
-- clean up giff.c and test.cpp
-	- incorporate helper headers into test.cpp to simplify repo???
+- multithreading (double fork/join)
+- preprocessor options to turn off multithreading or intrinsics
+- win+MSVC compatibility
+	- intrinsics
+	- pthreads
 - combine header and implementation
 	- rename everything at global scope to avoid name conflicts
-	- create multiple implementation test files with different options and test all at once
-- win+MSVC compatibility
-	- pthreads
-	- intrinsics
 - make sure it compiles correctly on all targets (gcc + clang + msvc, 32 + 64 bit)
 - API for returning a block of encoded memory instead of writing it out with <stdio.h> functions
 - comparisons to other libraries
 - write documentation
 
-- incremental API for exporting without freezing the main thread
-	- or is multithreading good enough for people who need this behavior?
-		- probably not, as it would also limit memory consumption, which can be a big deal
-	- rewrite simplified API as a layer over the incremental API
 - simplified API which automatically determines optimal thread counts?
-
-- add runtime option for channel importance order?
-- add runtime option for maximum bit depth?
-- allow custom allocation?
-- SIMD-ize color counting?
-- SIMD-ize kernel derivation?
-- optimize palette generation?
-- replace thread barrier mechanism (try spinlock)?
-- increase bit depth to 16?
-- add test cases for smaller and larger GIFs?
+- runtime option for channel importance order?
+- allow custom allocators
+- increase maximum bit depth to 16?
 - asserts for invalid user parameters??
-- proper error handling???
+- explicit error handling???
+- bitfield for `used` array????
 
 
 
-- write documentation
+documentation:
 	- in file
 	- in repository
 	- things to cover:
 		- use case for this library
 			- things this library specifically doesn't do
-				- incremental encoding/encoding in a background thread (YET)
 				- exact colors, fancy GIF features
 				- image resizing (use stb_image_resize if you need this)
-		- explanation of RawFrame/PixelFormat flexibility
 		- how much memory the library will allocate
 		- API, parameter-by-parameter
 		- compile-time options
 		- performance tips
 - publish and publicize
 
-- write directly to file?
-- bitfield for `used` array?
-- explicit error handling?
-
-- multithread color counting?
-
-- compare against other single-header or popular GIF export libraries
 
 
 
 https://docs.microsoft.com/en-us/windows/desktop/ProcThread/creating-threads
 https://docs.microsoft.com/en-us/windows/desktop/sync/synchronization-barriers
-
-
-
-env DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib
-env MALLOC_PERMIT_INSANE_REQUESTS=1
-env MALLOC_STRICT_SIZE=8
-
