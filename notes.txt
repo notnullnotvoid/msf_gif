@@ -13,6 +13,7 @@ TODO:
 - write documentation
 
 - simplified API which automatically determines optimal thread counts?
+- improve 
 - runtime option for channel importance order?
 - allow custom allocators
 - increase maximum bit depth to 16?
@@ -30,6 +31,7 @@ documentation:
 			- things this library specifically doesn't do
 				- exact colors, fancy GIF features
 				- image resizing (use stb_image_resize if you need this)
+			- thins it doesn't to *yet*, but can be supported upon request
 		- how much memory the library will allocate
 		- API, parameter-by-parameter
 		- compile-time options

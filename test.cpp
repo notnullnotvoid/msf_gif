@@ -14,11 +14,11 @@ struct RawBlob {
 // #include <unistd.h>
 
 int main() {
-    // printf("logical cores available: %ld\n", sysconf(_SC_NPROC/ESSORS_ONLN));
+    // printf("logical cores available: %ld\n", sysconf(_SC_NPROCESSORS_ONLN));
     const char * names[] = {
         "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "odd", "tiles",
         "anchor", "always-in-front", "flip",
-        "sky",
+        // "sky",
         // "diwide-large",
     };
     // const char * names[] = { "bouncy", "diwide", "increase" };

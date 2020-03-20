@@ -403,12 +403,92 @@ size_t msf_end_gif(void * handle) { TimeFunc
     return bytesWritten;
 }
 
+#include <unistd.h>
+#include <pthread.h>
+
+//TODO: combine these two structs into one ALL-POWERFUL ULTRA SUPER MEGA GIGA STRUCT
+struct CookThreadData {
+    uint8_t ** rawFrames;
+    CookedFrame * cooked;
+    FileBuffer * buffers;
+    int frameCount, width, height, centiSeconds, quality, pitchInBytes;
+
+    int frameIdx;
+};
+
+void * thread_cook_frames(void * arg) {
+    CookThreadData * data = (CookThreadData *) arg;
+
+    int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
+    while (frameIdx < data->frameCount) {
+        uint8_t * pixels = data->rawFrames[frameIdx];
+        uint8_t * raw = data->pitchInBytes > 0? pixels : &pixels[data->width * (data->height - 1) * 4];
+        data->cooked[frameIdx] = cook_frame(data->width, data->height, data->pitchInBytes, data->quality, raw);
+        frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
+    }
+
+    return NULL;
+}
+
+void * thread_compress_frames(void * arg) {
+    CookThreadData * data = (CookThreadData *) arg;
+
+    int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
+    while (frameIdx < data->frameCount) {
+        CookedFrame prev = frameIdx == 0? (CookedFrame) {} : data->cooked[frameIdx - 1];
+        data->buffers[frameIdx] =
+            compress_frame(data->width, data->height, data->centiSeconds, data->cooked[frameIdx], prev);
+        frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
+    }
+
+    return NULL;
+}
+
+void fork_join(void * (* func) (void *), void * data, pthread_t * threads, int poolSize) {
+    //ensure that threads will be joinable (this is not guaranteed to be a default setting)
+    pthread_t threads[64] = {};
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+    for (int i = 0; i < poolSize; ++i) {
+        pthread_create(&threads[i], &attr, func, data);
+    }
+    pthread_attr_destroy(&attr);
+
+    //join in the work on the main thread
+    func(data);
+
+    //wait for threads to finish
+    for (int i = 0; i < poolSize; ++i) {
+        pthread_join(threads[i], NULL);
+    }
+}
+
 size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount,
     int width, int height, bool flipOutput, int centiSeconds, int quality, const char * path)
 { TimeFunc
-    void * handle = msf_begin_gif(path, width, height, centiSeconds, quality, flipOutput);
+    GifState * state = (GifState *) msf_begin_gif(path, width, height, centiSeconds, quality, flipOutput);
+
+    CookedFrame * cookedFrames = (CookedFrame *) malloc(rawFrameCount * sizeof(CookedFrame));
+    FileBuffer * buffers = (FileBuffer *) malloc(rawFrameCount * sizeof(FileBuffer));
+    CookThreadData cookData = { rawFrames, cookedFrames, buffers, rawFrameCount,
+                                width, height, centiSeconds, quality, state->pitchInBytes, 0 };
+
+    //spawn worker threads
+    int logicalCores = sysconf(_SC_NPROCESSORS_ONLN);
+    // int logicalCores = 4;
+    int poolSize = min(64, min(rawFrameCount, logicalCores)) - 1;
+    fork_join(thread_cook_frames, &cookData, threads, poolSize);
+    cookData.frameIdx = 0;
+    fork_join(thread_compress_frames, &cookData, threads, poolSize);
+
     for (int i = 0; i < rawFrameCount; ++i) {
-        msf_gif_frame(handle, rawFrames[i]);
+        fwrite(buffers[i].block, buffers[i].head - buffers[i].block, 1, state->fp);
     }
-    return msf_end_gif(handle);
+
+    uint8_t trailingMarker = 0x3B;
+    fwrite(&trailingMarker, 1, 1, state->fp);
+    size_t bytesWritten = ftell(state->fp);
+    fclose(state->fp);
+    return bytesWritten;
 }
