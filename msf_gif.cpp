@@ -412,13 +412,11 @@ struct CookThreadData {
     CookedFrame * cooked;
     FileBuffer * buffers;
     int frameCount, width, height, centiSeconds, quality, pitchInBytes;
-
     int frameIdx;
 };
 
-void * thread_cook_frames(void * arg) {
+static void * thread_cook_frames(void * arg) {
     CookThreadData * data = (CookThreadData *) arg;
-
     int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     while (frameIdx < data->frameCount) {
         uint8_t * pixels = data->rawFrames[frameIdx];
@@ -426,13 +424,11 @@ void * thread_cook_frames(void * arg) {
         data->cooked[frameIdx] = cook_frame(data->width, data->height, data->pitchInBytes, data->quality, raw);
         frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     }
-
     return NULL;
 }
 
-void * thread_compress_frames(void * arg) {
+static void * thread_compress_frames(void * arg) {
     CookThreadData * data = (CookThreadData *) arg;
-
     int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     while (frameIdx < data->frameCount) {
         CookedFrame prev = frameIdx == 0? (CookedFrame) {} : data->cooked[frameIdx - 1];
@@ -440,13 +436,11 @@ void * thread_compress_frames(void * arg) {
             compress_frame(data->width, data->height, data->centiSeconds, data->cooked[frameIdx], prev);
         frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     }
-
     return NULL;
 }
 
-void fork_join(void * (* func) (void *), void * data, pthread_t * threads, int poolSize) {
+static void fork_join(void * (* func) (void *), void * data, pthread_t * threads, int poolSize) {
     //ensure that threads will be joinable (this is not guaranteed to be a default setting)
-    pthread_t threads[64] = {};
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
@@ -454,11 +448,7 @@ void fork_join(void * (* func) (void *), void * data, pthread_t * threads, int p
         pthread_create(&threads[i], &attr, func, data);
     }
     pthread_attr_destroy(&attr);
-
-    //join in the work on the main thread
     func(data);
-
-    //wait for threads to finish
     for (int i = 0; i < poolSize; ++i) {
         pthread_join(threads[i], NULL);
     }
@@ -475,16 +465,22 @@ size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount,
                                 width, height, centiSeconds, quality, state->pitchInBytes, 0 };
 
     //spawn worker threads
-    int logicalCores = sysconf(_SC_NPROCESSORS_ONLN);
-    // int logicalCores = 4;
+    int logicalCores = sysconf(_SC_NPROCESSORS_ONLN); //TODO: figure out how to get the number of *physical* cores
+    // int logicalCores = 1;
     int poolSize = min(64, min(rawFrameCount, logicalCores)) - 1;
+    pthread_t threads[64] = {};
     fork_join(thread_cook_frames, &cookData, threads, poolSize);
     cookData.frameIdx = 0;
     fork_join(thread_compress_frames, &cookData, threads, poolSize);
 
     for (int i = 0; i < rawFrameCount; ++i) {
         fwrite(buffers[i].block, buffers[i].head - buffers[i].block, 1, state->fp);
+        free(cookedFrames[i].pixels);
+        free(cookedFrames[i].used);
+        free(buffers[i].block);
     }
+    free(cookedFrames);
+    free(buffers);
 
     uint8_t trailingMarker = 0x3B;
     fwrite(&trailingMarker, 1, 1, state->fp);
