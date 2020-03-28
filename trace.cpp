@@ -25,17 +25,32 @@ static uint64_t tscStart;
 	}
 #endif
 
-TraceEvent * beginEventList;
-TraceEvent * beginEventHead;
-TraceEvent * beginEventEnd;
+thread_local TraceEventArrays * traceArrays;
 
-TraceEvent * endEventList;
-TraceEvent * endEventHead;
-TraceEvent * endEventEnd;
+struct TraceThreadInfo {
+	TraceEventArrays * arrays;
+	int thread;
+};
 
-TraceEvent * instantEventList;
-TraceEvent * instantEventHead;
-TraceEvent * instantEventEnd;
+TraceEventArrays ** traceThreads;
+int traceThreadCount;
+
+void init_profiling_thread() {
+	if (traceArrays) return;
+	const size_t NUM_TRACE_EVENTS = 1024 * 1024;
+	traceArrays = (TraceEventArrays *) malloc(sizeof(TraceEventArrays));
+	traceArrays->beginList = (TraceEvent *) malloc(NUM_TRACE_EVENTS * sizeof(TraceEvent));
+	traceArrays->beginHead = traceArrays->beginList;
+	traceArrays->beginEnd  = traceArrays->beginList + NUM_TRACE_EVENTS;
+	traceArrays->endList = (TraceEvent *) malloc(NUM_TRACE_EVENTS * sizeof(TraceEvent));
+	traceArrays->endHead = traceArrays->endList;
+	traceArrays->endEnd  = traceArrays->endList + NUM_TRACE_EVENTS;
+	traceArrays->instantList = (TraceEvent *) malloc(NUM_TRACE_EVENTS * sizeof(TraceEvent));
+	traceArrays->instantHead = traceArrays->instantList;
+	traceArrays->instantEnd  = traceArrays->instantList + NUM_TRACE_EVENTS;
+	int threadNum = __sync_fetch_and_add(&traceThreadCount, 1);
+	traceThreads[threadNum] = traceArrays;
+}
 
 void init_profiling_trace() {
 	#ifdef _WIN32
@@ -48,24 +63,13 @@ void init_profiling_trace() {
 		nanoStart = now.tv_sec * 1'000'000'000LL + now.tv_nsec;
 	#endif
 	tscStart = __rdtsc();
+	traceThreads = (TraceEventArrays **) malloc(1024 * sizeof(TraceEventArrays *));
 
-	const size_t NUM_TRACE_EVENTS = 1024 * 1024;
-
-	beginEventList = (TraceEvent *) malloc(NUM_TRACE_EVENTS * sizeof(TraceEvent));
-	beginEventHead = beginEventList;
-	beginEventEnd  = beginEventList + NUM_TRACE_EVENTS;
-
-	endEventList = (TraceEvent *) malloc(NUM_TRACE_EVENTS * sizeof(TraceEvent));
-	endEventHead = endEventList;
-	endEventEnd  = endEventList + NUM_TRACE_EVENTS;
-
-	instantEventList = (TraceEvent *) malloc(NUM_TRACE_EVENTS * sizeof(TraceEvent));
-	instantEventHead = instantEventList;
-	instantEventEnd  = instantEventList + NUM_TRACE_EVENTS;
+	init_profiling_thread();
 
 	//NOTE: to avoid discrepancies between times listed in json and times shown in chrome,
 	//		we make sure the first event starts at 0 microseconds
-	*beginEventHead++ = { "main", tscStart };
+	*traceArrays->instantHead++ = { "profiling start", tscStart };
 }
 
 void print_profiling_trace() {
@@ -81,30 +85,33 @@ void print_profiling_trace() {
 
 	FILE * out = fopen("trace.json", "wb");
 	fprintf(out, "[\n");
-	TraceEvent * begin = beginEventList;
-	TraceEvent * end = endEventList;
-	while (begin != beginEventHead || end != endEventHead) {
-		if (end == endEventHead) {
-			fprintf(out, "{\"name\":\"%s\",\"ph\":\"B\",\"pid\":0,\"tid\":0,\"ts\":%f},\n",
-				begin->name, (begin->timestamp - tscStart) / tscPerMicrosecond);
-			++begin;
-		} else if (begin == beginEventHead) {
-			fprintf(out, "{\"name\":\"%s\",\"ph\":\"E\",\"pid\":0,\"tid\":0,\"ts\":%f},\n",
-				end->name, (end->timestamp - tscStart) / tscPerMicrosecond);
-			++end;
-		} else if (begin->timestamp < end->timestamp) {
-			fprintf(out, "{\"name\":\"%s\",\"ph\":\"B\",\"pid\":0,\"tid\":0,\"ts\":%f},\n",
-				begin->name, (begin->timestamp - tscStart) / tscPerMicrosecond);
-			++begin;
-		} else {
-			fprintf(out, "{\"name\":\"%s\",\"ph\":\"E\",\"pid\":0,\"tid\":0,\"ts\":%f},\n",
-				end->name, (end->timestamp - tscStart) / tscPerMicrosecond);
-			++end;
+	for (int i = 0; i < traceThreadCount; ++i) {
+		TraceEventArrays * arrays = traceThreads[i];
+		TraceEvent * begin = arrays->beginList;
+		TraceEvent * end = arrays->endList;
+		while (begin != arrays->beginHead || end != arrays->endHead) {
+			if (end == arrays->endHead) {
+				fprintf(out, "{\"name\":\"%s\",\"ph\":\"B\",\"pid\":0,\"tid\":%d,\"ts\":%f},\n",
+					begin->name, i, (begin->timestamp - tscStart) / tscPerMicrosecond);
+				++begin;
+			} else if (begin == arrays->beginHead) {
+				fprintf(out, "{\"name\":\"%s\",\"ph\":\"E\",\"pid\":0,\"tid\":%d,\"ts\":%f},\n",
+					end->name, i, (end->timestamp - tscStart) / tscPerMicrosecond);
+				++end;
+			} else if (begin->timestamp < end->timestamp) {
+				fprintf(out, "{\"name\":\"%s\",\"ph\":\"B\",\"pid\":0,\"tid\":%d,\"ts\":%f},\n",
+					begin->name, i, (begin->timestamp - tscStart) / tscPerMicrosecond);
+				++begin;
+			} else {
+				fprintf(out, "{\"name\":\"%s\",\"ph\":\"E\",\"pid\":0,\"tid\":%d,\"ts\":%f},\n",
+					end->name, i, (end->timestamp - tscStart) / tscPerMicrosecond);
+				++end;
+			}
 		}
-	}
-	for (TraceEvent * e = instantEventList; e != instantEventHead; ++e) {
-		fprintf(out, "{\"name\":\"%s\",\"ph\":\"i\",\"pid\":0,\"tid\":0,\"s\":\"g\",\"ts\":%f},\n",
-			e->name, (e->timestamp - tscStart) / tscPerMicrosecond);
+		for (TraceEvent * e = arrays->instantList; e != arrays->instantHead; ++e) {
+			fprintf(out, "{\"name\":\"%s\",\"ph\":\"i\",\"pid\":0,\"tid\":%d,\"s\":\"g\",\"ts\":%f},\n",
+				e->name, i, (e->timestamp - tscStart) / tscPerMicrosecond);
+		}
 	}
 	fclose(out);
 }

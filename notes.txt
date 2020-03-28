@@ -1,6 +1,7 @@
 
 TODO:
-- multithreading (double fork/join)
+- make trace.cpp work with multithreading
+- allow specifying maximum thread counts in the APIs
 - preprocessor options to turn off multithreading or intrinsics
 - win+MSVC compatibility
 	- intrinsics

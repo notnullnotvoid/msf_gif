@@ -110,22 +110,7 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int quali
             for (; x < width - 3; x += 4) {
                 uint8_t * pixels = &raw[y * pitchInBytes + x * 4];
                 __m128i p = _mm_loadu_si128((__m128i *) pixels);
-#if 0
-                __m128i r = _mm_and_si128(p, _mm_set1_epi32(0x000000FF));
-                __m128i r1 = _mm_mullo_epi16(r, _mm_set1_epi32(rmul));
-                __m128i r2 = _mm_adds_epu16(r1, _mm_srli_epi32(k, rbits));
-                __m128i r3 = _mm_srli_epi32(r2, 16 - rbits);
 
-                __m128i g = _mm_and_si128(_mm_srli_epi32(p, 8), _mm_set1_epi32(0x000000FF));
-                __m128i g1 = _mm_mullo_epi16(g, _mm_set1_epi32(gmul));
-                __m128i g2 = _mm_adds_epu16(g1, _mm_srli_epi32(k, gbits));
-                __m128i g3 = _mm_and_si128(_mm_srli_epi32(g2, 16 - rbits - gbits), _mm_set1_epi32(gmask));
-
-                __m128i b = _mm_and_si128(_mm_srli_epi32(p, 16), _mm_set1_epi32(0x000000FF));
-                __m128i b1 = _mm_mullo_epi16(b, _mm_set1_epi32(bmul));
-                __m128i b2 = _mm_adds_epu16(b1, _mm_srli_epi32(k, bbits));
-                __m128i b3 = _mm_and_si128(_mm_srli_epi32(b2, 16 - rbits - gbits - bbits), _mm_set1_epi32(bmask));
-#else
                 __m128i rb = _mm_and_si128(p, _mm_set1_epi32(0x00FF00FF));
                 __m128i rb1 = _mm_mullo_epi16(rb, _mm_set_epi16(bmul, rmul, bmul, rmul, bmul, rmul, bmul, rmul));
                 __m128i rb2 = _mm_adds_epu16(rb1, k2);
@@ -136,7 +121,7 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int quali
                 __m128i g1 = _mm_mullo_epi16(g, _mm_set1_epi32(gmul));
                 __m128i g2 = _mm_adds_epu16(g1, _mm_srli_epi32(k, gbits));
                 __m128i g3 = _mm_and_si128(_mm_srli_epi32(g2, 16 - rbits - gbits), _mm_set1_epi32(gmask));
-#endif
+
                 //TODO: does storing this as a __m128i then reading it back as a uint32_t violate strict aliasing?
                 uint32_t * c = &cooked[y * width + x];
                 __m128i out = _mm_or_si128(_mm_or_si128(r3, g3), b3);
@@ -150,9 +135,6 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int quali
                 int dx = x & 3, dy = y & 3;
                 int k = ditherKernel[dy * 4 + dx];
                 cooked[y * width + x] =
-                    // min(65535, p[2] * bmul + (k >> bbits)) >> (16 - bbits) << (rbits + gbits) |
-                    // min(65535, p[1] * gmul + (k >> gbits)) >> (16 - gbits) <<  rbits          |
-                    // min(65535, p[0] * rmul + (k >> rbits)) >> (16 - rbits);
                     (min(65535, p[2] * bmul + (k >> bbits)) >> (16 - rbits - gbits - bbits) & bmask) |
                     (min(65535, p[1] * gmul + (k >> gbits)) >> (16 - rbits - gbits        ) & gmask) |
                      min(65535, p[0] * rmul + (k >> rbits)) >> (16 - rbits                );
@@ -416,6 +398,7 @@ struct CookThreadData {
 };
 
 static void * thread_cook_frames(void * arg) {
+    init_profiling_thread();
     CookThreadData * data = (CookThreadData *) arg;
     int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     while (frameIdx < data->frameCount) {
@@ -428,6 +411,7 @@ static void * thread_cook_frames(void * arg) {
 }
 
 static void * thread_compress_frames(void * arg) {
+    init_profiling_thread();
     CookThreadData * data = (CookThreadData *) arg;
     int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     while (frameIdx < data->frameCount) {
@@ -465,8 +449,8 @@ size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount,
                                 width, height, centiSeconds, quality, state->pitchInBytes, 0 };
 
     //spawn worker threads
-    int logicalCores = sysconf(_SC_NPROCESSORS_ONLN); //TODO: figure out how to get the number of *physical* cores
-    // int logicalCores = 1;
+    //NOTE: from empirical tests, it seems like both cooking and compressing benefit slightly from hyperthreading
+    int logicalCores = sysconf(_SC_NPROCESSORS_ONLN);
     int poolSize = min(64, min(rawFrameCount, logicalCores)) - 1;
     pthread_t threads[64] = {};
     fork_join(thread_cook_frames, &cookData, threads, poolSize);
@@ -486,5 +470,6 @@ size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount,
     fwrite(&trailingMarker, 1, 1, state->fp);
     size_t bytesWritten = ftell(state->fp);
     fclose(state->fp);
+    free(state);
     return bytesWritten;
 }

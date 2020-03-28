@@ -8,37 +8,51 @@ struct TraceEvent {
     uint64_t timestamp;
 };
 
-extern TraceEvent * beginEventList;
-extern TraceEvent * beginEventHead;
-extern TraceEvent * beginEventEnd;
+struct TraceEventArrays {
+    TraceEvent * beginList;
+    TraceEvent * beginHead;
+    TraceEvent * beginEnd;
 
-extern TraceEvent * endEventList;
-extern TraceEvent * endEventHead;
-extern TraceEvent * endEventEnd;
+    TraceEvent * endList;
+    TraceEvent * endHead;
+    TraceEvent * endEnd;
 
-extern TraceEvent * instantEventList;
-extern TraceEvent * instantEventHead;
-extern TraceEvent * instantEventEnd;
+    TraceEvent * instantList;
+    TraceEvent * instantHead;
+    TraceEvent * instantEnd;
+};
+
+extern thread_local TraceEventArrays * traceArrays;
 
 void init_profiling_trace();
+void init_profiling_thread();
 void print_profiling_trace();
 
 static inline __attribute__((always_inline)) void trace_begin_event(const char * name) {
-    *beginEventHead++ = { name, __rdtsc() };
-    if (beginEventHead == beginEventEnd)
-        { beginEventHead = beginEventList; endEventHead = endEventList; instantEventHead = instantEventList; }
+    *traceArrays->beginHead++ = { name, __rdtsc() };
+    if (traceArrays->beginHead == traceArrays->beginEnd) {
+        traceArrays->beginHead = traceArrays->beginList;
+        traceArrays->endHead = traceArrays->endList;
+        traceArrays->instantHead = traceArrays->instantList;
+    }
 }
 
 static inline __attribute__((always_inline)) void trace_end_event(const char * name) {
-    *endEventHead++ = { name, __rdtsc() };
-    if (endEventHead == endEventEnd)
-        { beginEventHead = beginEventList; endEventHead = endEventList; instantEventHead = instantEventList; }
+    *traceArrays->endHead++ = { name, __rdtsc() };
+    if (traceArrays->endHead == traceArrays->endEnd) {
+        traceArrays->beginHead = traceArrays->beginList;
+        traceArrays->endHead = traceArrays->endList;
+        traceArrays->instantHead = traceArrays->instantList;
+    }
 }
 
 static inline __attribute__((always_inline)) void trace_instant_event(const char * name) {
-    *instantEventHead++ = { name, __rdtsc() };
-    if (instantEventHead == instantEventEnd)
-        { beginEventHead = beginEventList; endEventHead = endEventList; instantEventHead = instantEventList; }
+    *traceArrays->instantHead++ = { name, __rdtsc() };
+    if (traceArrays->instantHead == traceArrays->instantEnd) {
+        traceArrays->beginHead = traceArrays->beginList;
+        traceArrays->endHead = traceArrays->endList;
+        traceArrays->instantHead = traceArrays->instantList;
+    }
 }
 
 struct ScopedTraceTimer {
