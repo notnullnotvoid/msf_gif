@@ -8,8 +8,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif //__cplusplus
-size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount,
-	int width, int height, bool flipOutput, int centiSeconds, int quality, const char * path);
+size_t msf_save_gif(const char * path, uint8_t ** rawFrames, int rawFrameCount, int width, int height,
+	int quality, int centiSecondsPerFrame, bool upsideDown, int maxThreads);
 
 //incremental API
 void * msf_begin_gif(const char * path, int width, int height, int centiSecondsPerFrame, int quality, bool upsideDown);

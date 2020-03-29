@@ -1,11 +1,24 @@
 
 TODO:
-- make trace.cpp work with multithreading
-- allow specifying maximum thread counts in the APIs
 - preprocessor options to turn off multithreading or intrinsics
 - win+MSVC compatibility
 	- intrinsics
 	- pthreads
+- allow specifying frame timings per-frame in the API
+
+API questions:
+- should I provide for per-frame timings?
+	- if so, how? is centiseconds good enough? should I instead take milliseconds and do the error accumulation myself?
+- should I provide an async API similar to the incremental API but it spawn background threads to do the work?
+	- if so, how should memory management be handled? is it good enough to just provide a `volatile int freeableFrame`?
+	(work through this a bit before posting about it)
+- how should the `quality` argument be presented? should it stay how it is, or be remapped to something more standard?
+- is the `upsideDown` bool arg good enough for common use cases? should I provide a stride as well?
+	- can provide SIMD-optimized swizzling functions for any other scenarios that turn out to be common
+- should I support writing to a memory block instead of a file? is that needed? if so, how would that best be done?
+	- write to a memory block by default, and make a wrapper that then writes that block to a file for convenience?
+		- this approach can be retrofitted to the API later on, so it's probably fine to defer this decision
+
 - combine header and implementation
 	- rename everything at global scope to avoid name conflicts
 - make sure it compiles correctly on all targets (gcc + clang + msvc, 32 + 64 bit)
@@ -13,8 +26,6 @@ TODO:
 - comparisons to other libraries
 - write documentation
 
-- simplified API which automatically determines optimal thread counts?
-- improve 
 - runtime option for channel importance order?
 - allow custom allocators
 - increase maximum bit depth to 16?

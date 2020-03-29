@@ -56,7 +56,7 @@ int main() {
             path, blob->width, blob->height, blob->frames, blob->centiSeconds); fflush(stdout);
         double pre = get_time();
         size_t out;
-        out = msf_save_gif(frames.data, frames.len, blob->width, blob->height, flipped, blob->centiSeconds, 12, path);
+        out = msf_save_gif(path, frames.data, frames.len, blob->width, blob->height, 12, blob->centiSeconds, flipped, 8);
         timers.add({ get_time() - pre, (size_t)(blob->frames * blob->width * blob->height * 4), out });
     }
 

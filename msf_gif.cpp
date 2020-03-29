@@ -438,10 +438,10 @@ static void fork_join(void * (* func) (void *), void * data, pthread_t * threads
     }
 }
 
-size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount,
-    int width, int height, bool flipOutput, int centiSeconds, int quality, const char * path)
+size_t msf_save_gif(const char * path, uint8_t ** rawFrames, int rawFrameCount, int width, int height,
+    int quality, int centiSeconds, bool upsideDown, int maxThreads)
 { TimeFunc
-    GifState * state = (GifState *) msf_begin_gif(path, width, height, centiSeconds, quality, flipOutput);
+    GifState * state = (GifState *) msf_begin_gif(path, width, height, centiSeconds, quality, upsideDown);
 
     CookedFrame * cookedFrames = (CookedFrame *) malloc(rawFrameCount * sizeof(CookedFrame));
     FileBuffer * buffers = (FileBuffer *) malloc(rawFrameCount * sizeof(FileBuffer));
@@ -451,7 +451,7 @@ size_t msf_save_gif(uint8_t ** rawFrames, int rawFrameCount,
     //spawn worker threads
     //NOTE: from empirical tests, it seems like both cooking and compressing benefit slightly from hyperthreading
     int logicalCores = sysconf(_SC_NPROCESSORS_ONLN);
-    int poolSize = min(64, min(rawFrameCount, logicalCores)) - 1;
+    int poolSize = min(64, min(rawFrameCount, min(maxThreads, logicalCores))) - 1;
     pthread_t threads[64] = {};
     fork_join(thread_cook_frames, &cookData, threads, poolSize);
     cookData.frameIdx = 0;
