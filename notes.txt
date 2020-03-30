@@ -1,10 +1,19 @@
 
 TODO:
-- preprocessor options to turn off multithreading or intrinsics
+- preprocessor checks for multithreading + intrinsics support
 - win+MSVC compatibility
 	- intrinsics
 	- pthreads
-- allow specifying frame timings per-frame in the API
+- change opaque `quality` arg to more understandable `bitDepth` arg?
+- combine header and implementation
+- add boilerplate to toggle profiling macros
+- allow specifying frame timings per-frame in the API?
+- make as many args specifiable per-frame as possible in the incremental API?
+- pass frame times as milliseconds and do error accumulation in the library?
+- re-allow specifying a stride per row???
+- error handling, somehow...
+- rename everything at global scope to avoid name conflicts
+- write documentation
 
 API questions:
 - how should errors be handled?
@@ -21,18 +30,11 @@ API questions:
 	- write to a memory block by default, and make a wrapper that then writes that block to a file for convenience?
 		- this approach can be retrofitted to the API later on, so it's probably fine to defer this decision
 
-- combine header and implementation
-	- rename everything at global scope to avoid name conflicts
-- make sure it compiles correctly on all targets (gcc + clang + msvc, 32 + 64 bit)
 - API for returning a block of encoded memory instead of writing it out with <stdio.h> functions
-- comparisons to other libraries
-- write documentation
-
-- runtime option for channel importance order?
 - allow custom allocators
+- async incremental API
+- runtime option for channel importance order?
 - increase maximum bit depth to 16?
-- asserts for invalid user parameters??
-- explicit error handling???
 - bitfield for `used` array????
 
 

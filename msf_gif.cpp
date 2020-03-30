@@ -62,7 +62,9 @@ typedef struct {
     int rbits, gbits, bbits;
 } CookedFrame;
 
+#if defined (__SSE2__) || _M_IX86_FP == 2
 #include <emmintrin.h>
+#endif
 
 static CookedFrame cook_frame(int width, int height, int pitchInBytes, int quality, uint8_t * raw) { TimeFunc
     //bit depth for each channel
@@ -103,7 +105,8 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int quali
 
         TimeLoop("cook") for (int y = 0; y < height; ++y) {
             int x = 0;
-            //SIMD loop
+
+        #if defined (__SSE2__) || _M_IX86_FP == 2
             __m128i k = _mm_loadu_si128((__m128i *) &ditherKernel[(y & 3) * 4]);
             __m128i k2 = _mm_or_si128(_mm_srli_epi32(k, rbits), _mm_slli_epi32(_mm_srli_epi32(k, bbits), 16));
             // TimeLoop("SIMD")
@@ -127,6 +130,7 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int quali
                 __m128i out = _mm_or_si128(_mm_or_si128(r3, g3), b3);
                 _mm_storeu_si128((__m128i *) c, out);
             }
+        #endif
 
             //scalar cleanup loop
             // TimeLoop("scalar")
@@ -385,17 +389,16 @@ size_t msf_end_gif(void * handle) { TimeFunc
     return bytesWritten;
 }
 
-#include <unistd.h>
-#include <pthread.h>
-
-//TODO: combine these two structs into one ALL-POWERFUL ULTRA SUPER MEGA GIGA STRUCT
-struct CookThreadData {
+struct CookThreadData { //TODO: rename to reflect its new use
     uint8_t ** rawFrames;
     CookedFrame * cooked;
     FileBuffer * buffers;
     int frameCount, width, height, centiSeconds, quality, pitchInBytes;
     int frameIdx;
 };
+
+//TODO: define atomic_post_inc() based on compiler detection
+//      and disable multithreading if we're on an undetected compiler
 
 static void * thread_cook_frames(void * arg) {
     init_profiling_thread();
@@ -423,8 +426,18 @@ static void * thread_compress_frames(void * arg) {
     return NULL;
 }
 
-static void fork_join(void * (* func) (void *), void * data, pthread_t * threads, int poolSize) {
-    //ensure that threads will be joinable (this is not guaranteed to be a default setting)
+#define MAX_THREADS 64
+
+#if defined (__unix__) || (defined (__APPLE__) && defined (__MACH__))
+#include <unistd.h>
+#include <pthread.h>
+
+static void fork_join(void * (* func) (void *), void * data, int maxThreads) {
+    int poolSize = min(MAX_THREADS, min(maxThreads, sysconf(_SC_NPROCESSORS_ONLN))) - 1;
+    pthread_t threads[MAX_THREADS] = {};
+
+    //we have to create a pthread_attr_t to ensure that the threads will be joinable,
+    //because threads are not guaranteed to be joinable by default according to the standard
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
@@ -437,6 +450,11 @@ static void fork_join(void * (* func) (void *), void * data, pthread_t * threads
         pthread_join(threads[i], NULL);
     }
 }
+#elif defined (_WIN32)
+//TODO: windows version of the above function
+#else
+static void fork_join(void * (* func) (void *), void * data, int maxThreads) { func(data); }
+#endif
 
 size_t msf_save_gif(const char * path, uint8_t ** rawFrames, int rawFrameCount, int width, int height,
     int quality, int centiSeconds, bool upsideDown, int maxThreads)
@@ -450,12 +468,9 @@ size_t msf_save_gif(const char * path, uint8_t ** rawFrames, int rawFrameCount, 
 
     //spawn worker threads
     //NOTE: from empirical tests, it seems like both cooking and compressing benefit slightly from hyperthreading
-    int logicalCores = sysconf(_SC_NPROCESSORS_ONLN);
-    int poolSize = min(64, min(rawFrameCount, min(maxThreads, logicalCores))) - 1;
-    pthread_t threads[64] = {};
-    fork_join(thread_cook_frames, &cookData, threads, poolSize);
+    fork_join(thread_cook_frames, &cookData, min(rawFrameCount, maxThreads));
     cookData.frameIdx = 0;
-    fork_join(thread_compress_frames, &cookData, threads, poolSize);
+    fork_join(thread_compress_frames, &cookData, min(rawFrameCount, maxThreads));
 
     for (int i = 0; i < rawFrameCount; ++i) {
         fwrite(buffers[i].block, buffers[i].head - buffers[i].block, 1, state->fp);

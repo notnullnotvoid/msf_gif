@@ -19,10 +19,10 @@ struct RawBlob {
 int main() {
     // printf("logical cores available: %ld\n", sysconf(_SC_NPROCESSORS_ONLN));
     const char * names[] = {
-        "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "odd", "tiles",
-        "anchor", "always-in-front", "flip",
-        "sky",
-        // "diwide-large",
+        // "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "odd", "tiles",
+        // "anchor", "always-in-front", "flip",
+        // "sky",
+        "diwide-large",
     };
     // const char * names[] = { "bouncy", "diwide", "increase" };
 
@@ -42,7 +42,7 @@ int main() {
 
     //TODO: write both dithered and non-dithered versions each to their own folder?
     //TODO: automatically regression-test against known good versions of the GIFs?
-#if 0
+#if 1
     for (int i = 0; i < blobs.len; ++i) {
         RawBlob * blob = blobs[i];
         bool flipped = blob->height < 0;
