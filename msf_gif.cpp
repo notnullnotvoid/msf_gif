@@ -66,12 +66,12 @@ typedef struct {
 #include <emmintrin.h>
 #endif
 
-static CookedFrame cook_frame(int width, int height, int pitchInBytes, int quality, uint8_t * raw) { TimeFunc
+static CookedFrame cook_frame(int width, int height, int pitchInBytes, int maxBitDepth, uint8_t * raw) { TimeFunc
     //bit depth for each channel
     const static int rbitdepths[13] = { 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1 };
     const static int gbitdepths[13] = { 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1 };
     const static int bbitdepths[13] = { 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1 };
-    int pal = 12 - max(0, min(12, quality));
+    int pal = 15 - max(3, min(15, maxBitDepth));
 
     // const int rbitdepths[5] = { 5, 4, 3, 2, 1 };
     // const int gbitdepths[5] = { 5, 4, 3, 2, 1 };
@@ -210,7 +210,7 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
     //allocate tlb
     int totalBits = frame.rbits + frame.gbits + frame.bbits;
     int tlbSize = 1 << totalBits;
-    uint8_t * tlb = (uint8_t *) malloc(tlbSize * sizeof(uint8_t));
+    uint8_t tlb[1 << 15]; //only 32k, so stack allocating is fine
 
     //generate palette
     typedef struct { uint8_t r, g, b; } Color3;
@@ -317,7 +317,6 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
     check(&buf, 1);
     write_u8(&buf, 0); //terminating block
 
-    free(tlb);
     free(lzw.data);
     return buf;
 }
@@ -329,19 +328,19 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
 typedef struct {
     FILE * fp;
     CookedFrame previousFrame;
-    int width, height, centiSeconds, pitchInBytes, quality;
+    int width, height;//, centiSeconds, pitchInBytes, maxBitDepth;
 } GifState;
 
-void * msf_begin_gif(const char * path, int width, int height, int centiSecondsPerFrame, int quality, bool upsideDown)
+void * msf_gif_begin(const char * path, int width, int height)
 { TimeFunc
     GifState * state = (GifState *) malloc(sizeof(GifState));
     state->fp = fopen(path, "wb");
     state->previousFrame = (CookedFrame) {};
     state->width = width;
     state->height = height;
-    state->centiSeconds = centiSecondsPerFrame;
-    state->pitchInBytes = upsideDown? -width * 4 : width * 4;
-    state->quality = quality;
+    // state->centiSeconds = centiSecondsPerFrame;
+    // state->pitchInBytes = upsideDown? -width * 4 : width * 4;
+    // state->maxBitDepth = maxBitDepth;
 
     struct __attribute__((__packed__)) {
         char header[6];
@@ -366,11 +365,12 @@ void * msf_begin_gif(const char * path, int width, int height, int centiSecondsP
     return state;
 }
 
-void msf_gif_frame(void * handle, uint8_t * pixels) { TimeFunc
+void msf_gif_frame(void * handle, uint8_t * pixels, int centiSeconds, int maxBitDepth, bool upsideDown) { TimeFunc
     GifState * state = (GifState *) handle;
-    uint8_t * raw = state->pitchInBytes > 0? pixels : &pixels[state->width * (state->height - 1) * 4];
-    CookedFrame frame = cook_frame(state->width, state->height, state->pitchInBytes, state->quality, raw);
-    FileBuffer buf = compress_frame(state->width, state->height, state->centiSeconds, frame, state->previousFrame);
+    int pitchInBytes = upsideDown? -state->width * 4 : state->width * 4;
+    uint8_t * raw = upsideDown? &pixels[state->width * 4 * (state->height - 1)] : pixels;
+    CookedFrame frame = cook_frame(state->width, state->height, pitchInBytes, maxBitDepth, raw);
+    FileBuffer buf = compress_frame(state->width, state->height, centiSeconds, frame, state->previousFrame);
     fwrite(buf.block, buf.head - buf.block, 1, state->fp);
     free(buf.block);
     free(frame.used);
@@ -378,7 +378,7 @@ void msf_gif_frame(void * handle, uint8_t * pixels) { TimeFunc
     state->previousFrame = frame;
 }
 
-size_t msf_end_gif(void * handle) { TimeFunc
+size_t msf_gif_end(void * handle) { TimeFunc
     GifState * state = (GifState *) handle;
     uint8_t trailingMarker = 0x3B;
     fwrite(&trailingMarker, 1, 1, state->fp);
@@ -389,11 +389,14 @@ size_t msf_end_gif(void * handle) { TimeFunc
     return bytesWritten;
 }
 
+
+
 struct CookThreadData { //TODO: rename to reflect its new use
     uint8_t ** rawFrames;
     CookedFrame * cooked;
     FileBuffer * buffers;
-    int frameCount, width, height, centiSeconds, quality, pitchInBytes;
+    int frameCount, width, height, centiSeconds, maxBitDepth;
+    bool upsideDown;
     int frameIdx;
 };
 
@@ -406,8 +409,9 @@ static void * thread_cook_frames(void * arg) {
     int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     while (frameIdx < data->frameCount) {
         uint8_t * pixels = data->rawFrames[frameIdx];
-        uint8_t * raw = data->pitchInBytes > 0? pixels : &pixels[data->width * (data->height - 1) * 4];
-        data->cooked[frameIdx] = cook_frame(data->width, data->height, data->pitchInBytes, data->quality, raw);
+        int pitchInBytes = data->upsideDown? -data->width * 4 : data->width * 4;
+        uint8_t * raw = data->upsideDown? &pixels[data->width * 4 * (data->height - 1)] : pixels;
+        data->cooked[frameIdx] = cook_frame(data->width, data->height, pitchInBytes, data->maxBitDepth, raw);
         frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     }
     return NULL;
@@ -456,17 +460,16 @@ static void fork_join(void * (* func) (void *), void * data, int maxThreads) {
 static void fork_join(void * (* func) (void *), void * data, int maxThreads) { func(data); }
 #endif
 
-size_t msf_save_gif(const char * path, uint8_t ** rawFrames, int rawFrameCount, int width, int height,
-    int quality, int centiSeconds, bool upsideDown, int maxThreads)
+size_t msf_gif_save(const char * path, uint8_t ** rawFrames, int rawFrameCount, int width, int height,
+    int maxBitDepth, int centiSeconds, bool upsideDown, int maxThreads)
 { TimeFunc
-    GifState * state = (GifState *) msf_begin_gif(path, width, height, centiSeconds, quality, upsideDown);
+    GifState * state = (GifState *) msf_gif_begin(path, width, height);
 
     CookedFrame * cookedFrames = (CookedFrame *) malloc(rawFrameCount * sizeof(CookedFrame));
     FileBuffer * buffers = (FileBuffer *) malloc(rawFrameCount * sizeof(FileBuffer));
     CookThreadData cookData = { rawFrames, cookedFrames, buffers, rawFrameCount,
-                                width, height, centiSeconds, quality, state->pitchInBytes, 0 };
+                                width, height, centiSeconds, maxBitDepth, upsideDown, 0 };
 
-    //spawn worker threads
     //NOTE: from empirical tests, it seems like both cooking and compressing benefit slightly from hyperthreading
     fork_join(thread_cook_frames, &cookData, min(rawFrameCount, maxThreads));
     cookData.frameIdx = 0;

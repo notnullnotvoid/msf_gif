@@ -22,7 +22,7 @@ int main() {
         // "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "odd", "tiles",
         // "anchor", "always-in-front", "flip",
         // "sky",
-        "diwide-large",
+        "keyhole",
     };
     // const char * names[] = { "bouncy", "diwide", "increase" };
 
@@ -60,7 +60,7 @@ int main() {
             path, blob->width, blob->height, blob->frames, blob->centiSeconds); fflush(stdout);
         double pre = get_time();
         size_t out;
-        out = msf_save_gif(path, frames.data, frames.len, blob->width, blob->height, 12, blob->centiSeconds, flipped, 0);
+        out = msf_gif_save(path, frames.data, frames.len, blob->width, blob->height, 15, blob->centiSeconds, flipped, 8);
         timers.add({ get_time() - pre, (size_t)(blob->frames * blob->width * blob->height * 4), out });
     }
 #else
