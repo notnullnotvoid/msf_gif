@@ -1,32 +1,21 @@
 
 TODO:
-- pass frame times as milliseconds and do error accumulation in the library?
-- re-allow specifying a stride per row???
-- error handling, somehow...
+- document non-incremental API options
+- error handling
+
+- HMN post
+
+- allow resetting thread id for more readable output from trace.cpp?
 - win+MSVC compatibility
 	- intrinsics
 	- pthreads
+- per-frame timing in the non-incremental API?
+- pass frame times as milliseconds and do error accumulation in the library?
 - combine header and implementation
 	- add boilerplate to toggle profiling macros
+- re-allow specifying a stride per row???
 - rename everything at global scope to avoid name conflicts
 - write documentation
-
-API questions:
-- how should errors be handled?
-	- return total bytes written to file so far, or 0 upon error?
-- should I provide for per-frame timings?
-	- if so, how? is centiseconds good enough? should I instead take milliseconds and do the error accumulation myself?
-- should I provide an async API similar to the incremental API but it spawn background threads to do the work?
-	- if so, how should memory management be handled? is it good enough to just provide a `volatile int freeableFrame`?
-	- should I just presume that the frames were allocated through the same allocator the user provides, and free them myself?
-	(work through this a bit before posting about it)
-- is the `upsideDown` bool arg good enough for common use cases? should I provide a stride as well?
-	- can provide SIMD-optimized swizzling functions for any other scenarios that turn out to be common
-- should I support writing to a memory block instead of a file? is that needed? if so, how would that best be done?
-	- write to a memory block by default, and make a wrapper that then writes that block to a file for convenience?
-		- this approach can be retrofitted to the API later on, so it's probably fine to defer this decision
-- should the non-incremental API even be included? its only advantage is being multithreaded, but an async API might kill that advantage...
-any other outstanding critiques of the API are also welcome
 
 - API for returning a block of encoded memory instead of writing it out with <stdio.h> functions
 - allow custom allocators
@@ -45,7 +34,7 @@ documentation:
 			- things this library specifically doesn't do
 				- exact colors, fancy GIF features
 				- image resizing (use stb_image_resize if you need this)
-			- things it doesn't to *yet*, but can be supported upon request
+			- things it doesn't do *yet*, but can be supported upon request
 				- support for custom allocators
 				- support for writing to a memory block instead of a file
 				- async API

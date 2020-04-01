@@ -56,12 +56,6 @@ static FileBuffer create_file_buffer(size_t bytes) {
 /// Frame Cooking                                                            ///
 ////////////////////////////////////////////////////////////////////////////////
 
-typedef struct {
-    uint32_t * pixels;
-    bool * used;
-    int rbits, gbits, bbits;
-} CookedFrame;
-
 #if defined (__SSE2__) || _M_IX86_FP == 2
 #include <emmintrin.h>
 #endif
@@ -72,11 +66,6 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int maxBi
     const static int gbitdepths[13] = { 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1 };
     const static int bbitdepths[13] = { 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1 };
     int pal = 15 - max(3, min(15, maxBitDepth));
-
-    // const int rbitdepths[5] = { 5, 4, 3, 2, 1 };
-    // const int gbitdepths[5] = { 5, 4, 3, 2, 1 };
-    // const int bbitdepths[5] = { 5, 4, 3, 2, 1 };
-    // int pal = 4 - max(0, min(4, quality));
 
     const static int ditherKernel[16] = {
          0 << 12,  8 << 12,  2 << 12, 10 << 12,
@@ -106,31 +95,31 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int maxBi
         TimeLoop("cook") for (int y = 0; y < height; ++y) {
             int x = 0;
 
-        #if defined (__SSE2__) || _M_IX86_FP == 2
-            __m128i k = _mm_loadu_si128((__m128i *) &ditherKernel[(y & 3) * 4]);
-            __m128i k2 = _mm_or_si128(_mm_srli_epi32(k, rbits), _mm_slli_epi32(_mm_srli_epi32(k, bbits), 16));
-            // TimeLoop("SIMD")
-            for (; x < width - 3; x += 4) {
-                uint8_t * pixels = &raw[y * pitchInBytes + x * 4];
-                __m128i p = _mm_loadu_si128((__m128i *) pixels);
+            #if defined (__SSE2__) || _M_IX86_FP == 2
+                __m128i k = _mm_loadu_si128((__m128i *) &ditherKernel[(y & 3) * 4]);
+                __m128i k2 = _mm_or_si128(_mm_srli_epi32(k, rbits), _mm_slli_epi32(_mm_srli_epi32(k, bbits), 16));
+                // TimeLoop("SIMD")
+                for (; x < width - 3; x += 4) {
+                    uint8_t * pixels = &raw[y * pitchInBytes + x * 4];
+                    __m128i p = _mm_loadu_si128((__m128i *) pixels);
 
-                __m128i rb = _mm_and_si128(p, _mm_set1_epi32(0x00FF00FF));
-                __m128i rb1 = _mm_mullo_epi16(rb, _mm_set_epi16(bmul, rmul, bmul, rmul, bmul, rmul, bmul, rmul));
-                __m128i rb2 = _mm_adds_epu16(rb1, k2);
-                __m128i r3 = _mm_srli_epi32(_mm_and_si128(rb2, _mm_set1_epi32(0x0000FFFF)), 16 - rbits);
-                __m128i b3 = _mm_and_si128(_mm_srli_epi32(rb2, 32 - rbits - gbits - bbits), _mm_set1_epi32(bmask));
+                    __m128i rb = _mm_and_si128(p, _mm_set1_epi32(0x00FF00FF));
+                    __m128i rb1 = _mm_mullo_epi16(rb, _mm_set_epi16(bmul, rmul, bmul, rmul, bmul, rmul, bmul, rmul));
+                    __m128i rb2 = _mm_adds_epu16(rb1, k2);
+                    __m128i r3 = _mm_srli_epi32(_mm_and_si128(rb2, _mm_set1_epi32(0x0000FFFF)), 16 - rbits);
+                    __m128i b3 = _mm_and_si128(_mm_srli_epi32(rb2, 32 - rbits - gbits - bbits), _mm_set1_epi32(bmask));
 
-                __m128i g = _mm_and_si128(_mm_srli_epi32(p, 8), _mm_set1_epi32(0x000000FF));
-                __m128i g1 = _mm_mullo_epi16(g, _mm_set1_epi32(gmul));
-                __m128i g2 = _mm_adds_epu16(g1, _mm_srli_epi32(k, gbits));
-                __m128i g3 = _mm_and_si128(_mm_srli_epi32(g2, 16 - rbits - gbits), _mm_set1_epi32(gmask));
+                    __m128i g = _mm_and_si128(_mm_srli_epi32(p, 8), _mm_set1_epi32(0x000000FF));
+                    __m128i g1 = _mm_mullo_epi16(g, _mm_set1_epi32(gmul));
+                    __m128i g2 = _mm_adds_epu16(g1, _mm_srli_epi32(k, gbits));
+                    __m128i g3 = _mm_and_si128(_mm_srli_epi32(g2, 16 - rbits - gbits), _mm_set1_epi32(gmask));
 
-                //TODO: does storing this as a __m128i then reading it back as a uint32_t violate strict aliasing?
-                uint32_t * c = &cooked[y * width + x];
-                __m128i out = _mm_or_si128(_mm_or_si128(r3, g3), b3);
-                _mm_storeu_si128((__m128i *) c, out);
-            }
-        #endif
+                    //TODO: does storing this as a __m128i then reading it back as a uint32_t violate strict aliasing?
+                    uint32_t * c = &cooked[y * width + x];
+                    __m128i out = _mm_or_si128(_mm_or_si128(r3, g3), b3);
+                    _mm_storeu_si128((__m128i *) c, out);
+                }
+            #endif
 
             //scalar cleanup loop
             // TimeLoop("scalar")
@@ -239,6 +228,7 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
 
     int tableBits = bit_log(tableIdx - 1);
     int tableSize = 1 << tableBits;
+    bool diff = frame.rbits == previous.rbits && frame.gbits == previous.gbits && frame.bbits == previous.bbits;
 
     struct __attribute__((__packed__)) {
         //graphics control extension
@@ -250,16 +240,22 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
         uint16_t left, top, width, height;
         uint8_t imgFlags;
     } header = {
-        0x21, 0xF9, 4, 0x04, 0, 0, 0,
+        0x21, 0xF9, 4, 0x05, 0, 0, 0,
         0x2C, 0, 0, 0, 0, 0x80,
     };
-    bool diff = frame.rbits == previous.rbits && frame.gbits == previous.gbits && frame.bbits == previous.bbits;
-    header.extFlags |= diff;
     header.centiSeconds = centiSeconds;
     header.width = width;
     header.height = height;
     header.imgFlags |= tableBits - 1;
     write_data(&buf, &header, sizeof(header));
+
+    // //NOTE: if __attribute__((__packed__)) turns out to be a cross-platform nightmare, I'll just do this:
+    // char headerBytes[19] = "\x21\xF9\x04\x05\0\0\0\0" "\x2C\0\0\0\0\0\0\0\0\x80";
+    // memcpy(&headerBytes[4], &centiSeconds, 2);
+    // memcpy(&headerBytes[13], &width, 2);
+    // memcpy(&headerBytes[15], &height, 2);
+    // headerBytes[17] |= tableBits - 1;
+    // write_data(&buf, &headerBytes, 18);
 
     //local color table
     write_data(&buf, table, tableSize * sizeof(Color3));
@@ -322,25 +318,14 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Drivers                                                                  ///
+/// Incremental API                                                          ///
 ////////////////////////////////////////////////////////////////////////////////
 
-typedef struct {
-    FILE * fp;
-    CookedFrame previousFrame;
-    int width, height;//, centiSeconds, pitchInBytes, maxBitDepth;
-} GifState;
-
-void * msf_gif_begin(const char * path, int width, int height)
-{ TimeFunc
-    GifState * state = (GifState *) malloc(sizeof(GifState));
-    state->fp = fopen(path, "wb");
+size_t msf_gif_begin(MsfGifState * state, const char * path, int width, int height) { TimeFunc
+    if (!(state->fp = fopen(path, "wb"))) return NULL;
     state->previousFrame = (CookedFrame) {};
     state->width = width;
     state->height = height;
-    // state->centiSeconds = centiSecondsPerFrame;
-    // state->pitchInBytes = upsideDown? -width * 4 : width * 4;
-    // state->maxBitDepth = maxBitDepth;
 
     struct __attribute__((__packed__)) {
         char header[6];
@@ -360,13 +345,19 @@ void * msf_gif_begin(const char * path, int width, int height)
     };
     header.width = width;
     header.height = height;
-    fwrite(&header, sizeof(header), 1, state->fp);
+    if (!fwrite(&header, sizeof(header), 1, state->fp)) return NULL;
 
-    return state;
+    // //NOTE: if __attribute__((__packed__)) turns out to be a cross-platform nightmare, I'll just do this:
+    char headerBytes[33] = "GIF89a\0\0\0\0\x10\0\0" "\x21\xFF\x0BNETSCAPE2.0\x03\x01\0\0\0";
+    memcpy(&headerBytes[6], &width, 2);
+    memcpy(&headerBytes[8], &height, 2);
+    fwrite(&headerBytes, 32, 1, state->fp);
+
+    return max(0, ftell(state->fp));
 }
 
-void msf_gif_frame(void * handle, uint8_t * pixels, int centiSeconds, int maxBitDepth, bool upsideDown) { TimeFunc
-    GifState * state = (GifState *) handle;
+size_t msf_gif_frame(MsfGifState * state, uint8_t * pixels, int centiSeconds, int maxBitDepth, bool upsideDown)
+{ TimeFunc
     int pitchInBytes = upsideDown? -state->width * 4 : state->width * 4;
     uint8_t * raw = upsideDown? &pixels[state->width * 4 * (state->height - 1)] : pixels;
     CookedFrame frame = cook_frame(state->width, state->height, pitchInBytes, maxBitDepth, raw);
@@ -376,23 +367,24 @@ void msf_gif_frame(void * handle, uint8_t * pixels, int centiSeconds, int maxBit
     free(frame.used);
     free(state->previousFrame.pixels);
     state->previousFrame = frame;
+    return max(0, ftell(state->fp));
 }
 
-size_t msf_gif_end(void * handle) { TimeFunc
-    GifState * state = (GifState *) handle;
+size_t msf_gif_end(MsfGifState * state) { TimeFunc
     uint8_t trailingMarker = 0x3B;
     fwrite(&trailingMarker, 1, 1, state->fp);
     size_t bytesWritten = ftell(state->fp);
     fclose(state->fp);
     free(state->previousFrame.pixels);
-    free(state);
     return bytesWritten;
 }
 
-
+////////////////////////////////////////////////////////////////////////////////
+/// Non-Incremental API                                                      ///
+////////////////////////////////////////////////////////////////////////////////
 
 struct CookThreadData { //TODO: rename to reflect its new use
-    uint8_t ** rawFrames;
+    uint8_t ** frames;
     CookedFrame * cooked;
     FileBuffer * buffers;
     int frameCount, width, height, centiSeconds, maxBitDepth;
@@ -408,7 +400,7 @@ static void * thread_cook_frames(void * arg) {
     CookThreadData * data = (CookThreadData *) arg;
     int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     while (frameIdx < data->frameCount) {
-        uint8_t * pixels = data->rawFrames[frameIdx];
+        uint8_t * pixels = data->frames[frameIdx];
         int pitchInBytes = data->upsideDown? -data->width * 4 : data->width * 4;
         uint8_t * raw = data->upsideDown? &pixels[data->width * 4 * (data->height - 1)] : pixels;
         data->cooked[frameIdx] = cook_frame(data->width, data->height, pitchInBytes, data->maxBitDepth, raw);
@@ -460,23 +452,24 @@ static void fork_join(void * (* func) (void *), void * data, int maxThreads) {
 static void fork_join(void * (* func) (void *), void * data, int maxThreads) { func(data); }
 #endif
 
-size_t msf_gif_save(const char * path, uint8_t ** rawFrames, int rawFrameCount, int width, int height,
+size_t msf_gif_save(const char * path, uint8_t ** frames, int frameCount, int width, int height,
     int maxBitDepth, int centiSeconds, bool upsideDown, int maxThreads)
 { TimeFunc
-    GifState * state = (GifState *) msf_gif_begin(path, width, height);
+    MsfGifState state;
+    msf_gif_begin(&state, path, width, height);
 
-    CookedFrame * cookedFrames = (CookedFrame *) malloc(rawFrameCount * sizeof(CookedFrame));
-    FileBuffer * buffers = (FileBuffer *) malloc(rawFrameCount * sizeof(FileBuffer));
-    CookThreadData cookData = { rawFrames, cookedFrames, buffers, rawFrameCount,
+    CookedFrame * cookedFrames = (CookedFrame *) malloc(frameCount * sizeof(CookedFrame));
+    FileBuffer * buffers = (FileBuffer *) malloc(frameCount * sizeof(FileBuffer));
+    CookThreadData cookData = { frames, cookedFrames, buffers, frameCount,
                                 width, height, centiSeconds, maxBitDepth, upsideDown, 0 };
 
     //NOTE: from empirical tests, it seems like both cooking and compressing benefit slightly from hyperthreading
-    fork_join(thread_cook_frames, &cookData, min(rawFrameCount, maxThreads));
+    fork_join(thread_cook_frames, &cookData, min(frameCount, maxThreads));
     cookData.frameIdx = 0;
-    fork_join(thread_compress_frames, &cookData, min(rawFrameCount, maxThreads));
+    fork_join(thread_compress_frames, &cookData, min(frameCount, maxThreads));
 
-    for (int i = 0; i < rawFrameCount; ++i) {
-        fwrite(buffers[i].block, buffers[i].head - buffers[i].block, 1, state->fp);
+    for (int i = 0; i < frameCount; ++i) {
+        fwrite(buffers[i].block, buffers[i].head - buffers[i].block, 1, state.fp);
         free(cookedFrames[i].pixels);
         free(cookedFrames[i].used);
         free(buffers[i].block);
@@ -485,9 +478,8 @@ size_t msf_gif_save(const char * path, uint8_t ** rawFrames, int rawFrameCount, 
     free(buffers);
 
     uint8_t trailingMarker = 0x3B;
-    fwrite(&trailingMarker, 1, 1, state->fp);
-    size_t bytesWritten = ftell(state->fp);
-    fclose(state->fp);
-    free(state);
+    fwrite(&trailingMarker, 1, 1, state.fp);
+    size_t bytesWritten = ftell(state.fp);
+    fclose(state.fp);
     return bytesWritten;
 }
