@@ -73,6 +73,12 @@ size_t msf_gif_save(const char * path, uint8_t ** frames, int frameCount, int wi
 
 #ifdef MSF_GIF_IMPL
 
+#ifndef MSF_GIF_ENABLE_TRACING
+#define TimeFunc
+#define TimeLoop(name)
+#define init_profiling_thread()
+#endif //MSF_GIF_ENABLE_TRACING
+
 #include <string.h> //memcpy
 #include <stdio.h> //FILE ops (fopen, etc.)
 #include <stdlib.h> //malloc, etc.
@@ -454,21 +460,21 @@ size_t msf_gif_end(MsfGifState * state) { TimeFunc
 /// Non-Incremental API                                                                                              ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-struct CookThreadData { //TODO: rename to reflect its new use
+typedef struct { //TODO: rename to reflect its new use
     uint8_t ** frames;
     CookedFrame * cooked;
     FileBuffer * buffers;
     int frameCount, width, height, centiSeconds, maxBitDepth;
     bool upsideDown;
     int frameIdx;
-};
+} ThreadData;
 
 //TODO: define atomic_post_inc() based on compiler detection
 //      and disable multithreading if we're on an undetected compiler
 
 static void * thread_cook_frames(void * arg) {
     init_profiling_thread();
-    CookThreadData * data = (CookThreadData *) arg;
+    ThreadData * data = (ThreadData *) arg;
     int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     while (frameIdx < data->frameCount) {
         uint8_t * pixels = data->frames[frameIdx];
@@ -482,7 +488,7 @@ static void * thread_cook_frames(void * arg) {
 
 static void * thread_compress_frames(void * arg) {
     init_profiling_thread();
-    CookThreadData * data = (CookThreadData *) arg;
+    ThreadData * data = (ThreadData *) arg;
     int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     while (frameIdx < data->frameCount) {
         CookedFrame prev = frameIdx == 0? (CookedFrame) {} : data->cooked[frameIdx - 1];
@@ -532,8 +538,8 @@ size_t msf_gif_save(const char * path, uint8_t ** frames, int frameCount, int wi
 
     CookedFrame * cookedFrames = (CookedFrame *) malloc(frameCount * sizeof(CookedFrame));
     FileBuffer * buffers = (FileBuffer *) malloc(frameCount * sizeof(FileBuffer));
-    CookThreadData cookData = { frames, cookedFrames, buffers, frameCount,
-                                width, height, centiSeconds, maxBitDepth, upsideDown, 0 };
+    ThreadData cookData = { frames, cookedFrames, buffers, frameCount,
+                            width, height, centiSeconds, maxBitDepth, upsideDown, 0 };
 
     //NOTE: from empirical tests, it seems like both cooking and compressing benefit slightly from hyperthreading
     fork_join(thread_cook_frames, &cookData, min(frameCount, maxThreads));
