@@ -1,7 +1,6 @@
 //TODO: write timing code that doesn't rely on instrumentation inside giff.c
 
-// #include "giff.h"
-#include "msf_gif.h"
+#include "../msf_gif.h"
 #include "trace.hpp"
 #include "List.hpp"
 #include "common.hpp"

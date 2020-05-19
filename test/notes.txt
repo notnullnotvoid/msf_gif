@@ -2,18 +2,19 @@
 RC TODOs:
 - create branches
 	- cleanup repo
+		- combine header and implementation
 	- remove multithreading from the RC
 - add pitch parameter
 	- 0 treated as a default or left alone?
 - error handling
 	- how to signal what kind of thing went wrong? (mem alloc failure, invalid param, unable to create/write file)
-- combine header and implementation
 - preprocess out profiling instrumentation unless it's explicitly enabled
 - MSVC compatibility
 - prefix all names at global scope
 - re-examine the SSE preprocessor stuff
 - make sure documentation is up-to-date
 	- include usage example in the documentation?
+	- readme
 
 
 
