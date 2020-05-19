@@ -22,8 +22,6 @@ typedef struct {
 extern "C" {
 #endif //__cplusplus
 
-//incremental API
-
 /**
  * @param path      Relative path to the output file, as per fopen().
  * @param width     Image width in pixels - must be the same for the whole gif.
@@ -31,6 +29,7 @@ extern "C" {
  * @return          The size of the file written so far, or 0 on error.
  */
 size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int width, int height);
+
 /**
  * @param pixels        Pointer to raw framebuffer data. Data must be contiguous in memory and in RGBA8 format.
  * @param centiSeconds  How long this frame should be displayed for.
@@ -45,25 +44,12 @@ size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int widt
  */
 size_t msf_gif_frame(MsfGifState * handle,
 					 uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes, bool upsideDown);
+
 /**
  * @return          The size of the written file in bytes, or 0 on error.
  */
 size_t msf_gif_end(MsfGifState * handle);
 
-
-
-//all-at-once API
-
-/**
- * @brief               An alternative to the incremental API. Its only advantage is that it is multithreaded.
- *                      All parameters shared with the incremental API are treated the same in both.
- *
- * @param maxThreads    This function will encode frames in parallel using the minimum of `maxThreads`, `frameCount`,
- *                      and the number of logical cores (a.k.a. hyperthreads) in the system.
- * @return              The size of the written file in bytes, or 0 on error.
- */
-size_t msf_gif_save(const char * path, uint8_t ** frames, int frameCount, int width, int height,
-    int maxBitDepth, int centiSecondsPerFrame, bool upsideDown, int maxThreads);
 #ifdef __cplusplus
 }
 #endif //__cplusplus
@@ -74,7 +60,7 @@ size_t msf_gif_save(const char * path, uint8_t ** frames, int frameCount, int wi
 
 #ifdef MSF_GIF_IMPL
 
-#ifdef MSF_GIF_ENABLE_TRACING
+#ifdef MSF_GIF_ENABLE_TRACING //instrumentation for capturing profiling traces
 #define MsfTimeFunc TimeFunc
 #define MsfTimeLoop TimeLoop
 #define msf_init_profiling_thread init_profiling_thread
@@ -87,6 +73,7 @@ size_t msf_gif_save(const char * path, uint8_t ** frames, int frameCount, int wi
 #include <string.h> //memcpy
 #include <stdio.h> //FILE ops (fopen, etc.)
 #include <stdlib.h> //malloc, etc.
+
 #ifdef __GNUC__
 static inline int msf_bit_log(int i) { return 32 - __builtin_clz(i); }
 #else //MSVC
@@ -437,112 +424,6 @@ size_t msf_gif_end(MsfGifState * handle) { MsfTimeFunc
     size_t bytesWritten = ftell(handle->fp);
     fclose(handle->fp);
     free(handle->previousFrame.pixels);
-    return bytesWritten;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// Non-Incremental API                                                                                              ///
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-typedef struct {
-    uint8_t ** frames;
-    MsfCookedFrame * cooked;
-    MsfFileBuffer * buffers;
-    int frameCount, width, height, centiSeconds, maxBitDepth;
-    bool upsideDown;
-    int frameIdx;
-} MsfGifThreadData;
-
-//TODO: define atomic_post_inc() based on compiler detection
-//      and disable multithreading if we're on an undetected compiler
-
-static void * msf_thread_cook_frames(void * arg) {
-    msf_init_profiling_thread();
-    MsfGifThreadData * data = (MsfGifThreadData *) arg;
-    int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
-    while (frameIdx < data->frameCount) {
-        uint8_t * pixels = data->frames[frameIdx];
-        int pitchInBytes = data->upsideDown? -data->width * 4 : data->width * 4;
-        uint8_t * raw = data->upsideDown? &pixels[data->width * 4 * (data->height - 1)] : pixels;
-        data->cooked[frameIdx] = msf_cook_frame(data->width, data->height, pitchInBytes, data->maxBitDepth, raw);
-        frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
-    }
-    return NULL;
-}
-
-static void * msf_thread_compress_frames(void * arg) {
-    msf_init_profiling_thread();
-    MsfGifThreadData * data = (MsfGifThreadData *) arg;
-    int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
-    while (frameIdx < data->frameCount) {
-        MsfCookedFrame prev = frameIdx == 0? (MsfCookedFrame) {} : data->cooked[frameIdx - 1];
-        data->buffers[frameIdx] =
-            msf_compress_frame(data->width, data->height, data->centiSeconds, data->cooked[frameIdx], prev);
-        frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
-    }
-    return NULL;
-}
-
-#define MSF_GIF_MAX_THREADS 64
-
-#if defined (__unix__) || (defined (__APPLE__) && defined (__MACH__))
-#include <unistd.h>
-#include <pthread.h>
-
-static void msf_fork_join(void * (* func) (void *), void * data, int maxThreads) {
-    int poolSize = msf_imin(MSF_GIF_MAX_THREADS, msf_imin(maxThreads, sysconf(_SC_NPROCESSORS_ONLN))) - 1;
-    pthread_t threads[MSF_GIF_MAX_THREADS] = {};
-
-    //we have to create a pthread_attr_t to ensure that the threads will be joinable,
-    //because threads are not guaranteed to be joinable by default according to the standard
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-    for (int i = 0; i < poolSize; ++i) {
-        pthread_create(&threads[i], &attr, func, data);
-    }
-    pthread_attr_destroy(&attr);
-    func(data);
-    for (int i = 0; i < poolSize; ++i) {
-        pthread_join(threads[i], NULL);
-    }
-}
-#elif defined (_WIN32)
-//TODO: windows version of the above function
-static void msf_fork_join(void * (* func) (void *), void * data, int maxThreads) { func(data); }
-#else
-static void msf_fork_join(void * (* func) (void *), void * data, int maxThreads) { func(data); }
-#endif
-
-size_t msf_gif_save(const char * path, uint8_t ** frames, int frameCount, int width, int height,
-    int maxBitDepth, int centiSeconds, bool upsideDown, int maxThreads)
-{ MsfTimeFunc
-    MsfGifState state;
-    msf_gif_begin(&state, path, width, height);
-
-    MsfCookedFrame * cookedFrames = (MsfCookedFrame *) malloc(frameCount * sizeof(MsfCookedFrame));
-    MsfFileBuffer * buffers = (MsfFileBuffer *) malloc(frameCount * sizeof(MsfFileBuffer));
-    MsfGifThreadData cookData = { frames, cookedFrames, buffers, frameCount,
-                               width, height, centiSeconds, maxBitDepth, upsideDown, 0 };
-
-    //NOTE: from empirical tests, it seems like both cooking and compressing benefit slightly from hyperthreading
-    msf_fork_join(msf_thread_cook_frames, &cookData, msf_imin(frameCount, maxThreads));
-    cookData.frameIdx = 0;
-    msf_fork_join(msf_thread_compress_frames, &cookData, msf_imin(frameCount, maxThreads));
-
-    for (int i = 0; i < frameCount; ++i) {
-        fwrite(buffers[i].block, buffers[i].head - buffers[i].block, 1, state.fp);
-        free(cookedFrames[i].pixels);
-        free(cookedFrames[i].used);
-        free(buffers[i].block);
-    }
-    free(cookedFrames);
-    free(buffers);
-
-    uint8_t trailingMarker = 0x3B;
-    fwrite(&trailingMarker, 1, 1, state.fp);
-    size_t bytesWritten = ftell(state.fp);
-    fclose(state.fp);
     return bytesWritten;
 }
 

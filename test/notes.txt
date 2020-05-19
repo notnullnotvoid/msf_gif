@@ -1,7 +1,5 @@
 
 RC TODOs:
-- prefix all names at global scope (including the profiling funcs + macros!)
-- remove multithreading from the RC
 - make sure documentation is up-to-date
 	- include usage example in the documentation?
 	- readme
