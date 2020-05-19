@@ -82,8 +82,11 @@ size_t msf_gif_save(const char * path, uint8_t ** frames, int frameCount, int wi
 #include <string.h> //memcpy
 #include <stdio.h> //FILE ops (fopen, etc.)
 #include <stdlib.h> //malloc, etc.
-
+#ifdef __GNUC__
 static inline int bit_log(int i) { return 32 - __builtin_clz(i); }
+#else //MSVC
+static int bit_log(int i) { unsigned long idx; _BitScanReverse(&idx, i) + 1; return idx; }
+#endif
 static inline int min(int a, int b) { return a < b? a : b; }
 static inline int max(int a, int b) { return b < a? a : b; }
 
@@ -98,8 +101,7 @@ typedef struct {
 } FileBuffer;
 
 static void check(FileBuffer * buf, size_t bytes) {
-    if (buf->head + bytes < buf->end)
-        return;
+    if (buf->head + bytes < buf->end) return;
 
     size_t byte = buf->head - buf->block;
     size_t size = buf->end - buf->block;
@@ -133,7 +135,7 @@ static FileBuffer create_file_buffer(size_t bytes) {
 /// Frame Cooking                                                                                                    ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#if defined (__SSE2__) || _M_IX86_FP == 2
+#if defined (__SSE2__) || defined (_M_X64) || _M_IX86_FP == 2
 #include <emmintrin.h>
 #endif
 
@@ -172,7 +174,7 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int maxBi
         TimeLoop("cook") for (int y = 0; y < height; ++y) {
             int x = 0;
 
-            #if defined (__SSE2__) || _M_IX86_FP == 2 //TODO: what is this second conditional again?
+			#if defined (__SSE2__) || defined (_M_X64) || _M_IX86_FP == 2
                 __m128i k = _mm_loadu_si128((__m128i *) &ditherKernel[(y & 3) * 4]);
                 __m128i k2 = _mm_or_si128(_mm_srli_epi32(k, rbits), _mm_slli_epi32(_mm_srli_epi32(k, bbits), 16));
                 // TimeLoop("SIMD")
@@ -307,32 +309,13 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
     int tableSize = 1 << tableBits;
     bool diff = frame.rbits == previous.rbits && frame.gbits == previous.gbits && frame.bbits == previous.bbits;
 
-    struct __attribute__((__packed__)) {
-        //graphics control extension
-        uint8_t extIntroducer, extIdentifier, blockSize, extFlags;
-        uint16_t centiSeconds;
-        uint8_t transparentColorIdx, blockTerminator;
-        //image descriptor
-        uint8_t imageSeparator;
-        uint16_t left, top, width, height;
-        uint8_t imgFlags;
-    } header = {
-        0x21, 0xF9, 4, 0x05, 0, 0, 0,
-        0x2C, 0, 0, 0, 0, 0x80,
-    };
-    header.centiSeconds = centiSeconds;
-    header.width = width;
-    header.height = height;
-    header.imgFlags |= tableBits - 1;
-    write_data(&buf, &header, sizeof(header));
-
-    // //NOTE: if __attribute__((__packed__)) turns out to be a cross-platform nightmare, I'll just do this:
-    // char headerBytes[19] = "\x21\xF9\x04\x05\0\0\0\0" "\x2C\0\0\0\0\0\0\0\0\x80";
-    // memcpy(&headerBytes[4], &centiSeconds, 2);
-    // memcpy(&headerBytes[13], &width, 2);
-    // memcpy(&headerBytes[15], &height, 2);
-    // headerBytes[17] |= tableBits - 1;
-    // write_data(&buf, &headerBytes, 18);
+    //NOTE: because __attribute__((__packed__)) is annoyingly non-cross-platform, we do this unreadable weirdness
+    char headerBytes[19] = "\x21\xF9\x04\x05\0\0\0\0" "\x2C\0\0\0\0\0\0\0\0\x80";
+    memcpy(&headerBytes[4], &centiSeconds, 2);
+    memcpy(&headerBytes[13], &width, 2);
+    memcpy(&headerBytes[15], &height, 2);
+    headerBytes[17] |= tableBits - 1;
+    write_data(&buf, &headerBytes, 18);
 
     //local color table
     write_data(&buf, table, tableSize * sizeof(Color3));
@@ -404,31 +387,11 @@ size_t msf_gif_begin(MsfGifState * state, const char * path, int width, int heig
     state->width = width;
     state->height = height;
 
-    struct __attribute__((__packed__)) {
-        char header[6];
-        //logical screen descriptor
-        uint16_t width, height;
-        uint8_t flags, bgColorIdx, pixelAspectRatio;
-        //application extension
-        uint8_t extIntroducer, extIdentifier, extDataSize;
-        char extData[11];
-        uint8_t dataBlockSize, idk;
-        uint16_t loopFlag;
-        uint8_t blockTerminator;
-    } header = {
-        { 'G', 'I', 'F', '8', '9', 'a' },
-        0, 0, 0x10, 0, 0,
-        0x21, 0xFF, 11, { 'N', 'E', 'T', 'S', 'C', 'A', 'P', 'E', '2', '.', '0' }, 3, 1, 0, 0
-    };
-    header.width = width;
-    header.height = height;
-    if (!fwrite(&header, sizeof(header), 1, state->fp)) return 0;
-
-    // //NOTE: if __attribute__((__packed__)) turns out to be a cross-platform nightmare, I'll just do this:
-    // char headerBytes[33] = "GIF89a\0\0\0\0\x10\0\0" "\x21\xFF\x0BNETSCAPE2.0\x03\x01\0\0\0";
-    // memcpy(&headerBytes[6], &width, 2);
-    // memcpy(&headerBytes[8], &height, 2);
-    // fwrite(&headerBytes, 32, 1, state->fp);
+    //NOTE: because __attribute__((__packed__)) is annoyingly non-cross-platform, we do this unreadable weirdness
+    char headerBytes[33] = "GIF89a\0\0\0\0\x10\0\0" "\x21\xFF\x0BNETSCAPE2.0\x03\x01\0\0\0";
+    memcpy(&headerBytes[6], &width, 2);
+    memcpy(&headerBytes[8], &height, 2);
+    fwrite(&headerBytes, 32, 1, state->fp);
 
     return max(0, ftell(state->fp));
 }
