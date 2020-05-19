@@ -10,11 +10,11 @@ typedef struct {
     uint32_t * pixels;
     bool * used;
     int rbits, gbits, bbits;
-} CookedFrame;
+} MsfCookedFrame;
 
 typedef struct {
     FILE * fp;
-    CookedFrame previousFrame;
+    MsfCookedFrame previousFrame;
     int width, height;
 } MsfGifState;
 
@@ -74,34 +74,38 @@ size_t msf_gif_save(const char * path, uint8_t ** frames, int frameCount, int wi
 
 #ifdef MSF_GIF_IMPL
 
-#ifndef MSF_GIF_ENABLE_TRACING
-#define TimeFunc
-#define TimeLoop(name)
-#define init_profiling_thread()
+#ifdef MSF_GIF_ENABLE_TRACING
+#define MsfTimeFunc TimeFunc
+#define MsfTimeLoop TimeLoop
+#define msf_init_profiling_thread init_profiling_thread
+#else
+#define MsfTimeFunc
+#define MsfTimeLoop(name)
+#define msf_init_profiling_thread()
 #endif //MSF_GIF_ENABLE_TRACING
 
 #include <string.h> //memcpy
 #include <stdio.h> //FILE ops (fopen, etc.)
 #include <stdlib.h> //malloc, etc.
 #ifdef __GNUC__
-static inline int bit_log(int i) { return 32 - __builtin_clz(i); }
+static inline int msf_bit_log(int i) { return 32 - __builtin_clz(i); }
 #else //MSVC
-static int bit_log(int i) { unsigned long idx; _BitScanReverse(&idx, i) + 1; return idx; }
+static inline int msf_bit_log(int i) { unsigned long idx; _BitScanReverse(&idx, i) + 1; return idx; }
 #endif
-static inline int min(int a, int b) { return a < b? a : b; }
-static inline int max(int a, int b) { return b < a? a : b; }
+static inline int msf_imin(int a, int b) { return a < b? a : b; }
+static inline int msf_imax(int a, int b) { return b < a? a : b; }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// FileBuffer                                                                                                       ///
+/// MsfFileBuffer                                                                                                    ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 typedef struct {
     uint8_t * block;
     uint8_t * head;
     uint8_t * end;
-} FileBuffer;
+} MsfFileBuffer;
 
-static bool check(FileBuffer * buf, size_t bytes) {
+static bool msf_fb_check(MsfFileBuffer * buf, size_t bytes) {
     if (buf->head + bytes < buf->end) return true;
 
     size_t byte = buf->head - buf->block;
@@ -114,24 +118,24 @@ static bool check(FileBuffer * buf, size_t bytes) {
 
     void * moved = realloc(buf->block, size);
     if (!moved) { free(buf->block); return false; }
-    buf->block = moved;
+    buf->block = (uint8_t *) moved;
     buf->head = buf->block + byte;
     buf->end = buf->block + size;
     return true;
 }
 
-static inline void write_data(FileBuffer * buf, void * data, size_t bytes) {
+static inline void msf_fb_write_data(MsfFileBuffer * buf, void * data, size_t bytes) {
     memcpy(buf->head, data, bytes);
     buf->head += bytes;
 }
 
-static inline void write_u8(FileBuffer * buf, uint8_t data) {
+static inline void msf_fb_write_u8(MsfFileBuffer * buf, uint8_t data) {
     *buf->head++ = data;
 }
 
-static FileBuffer create_file_buffer(size_t bytes) {
+static MsfFileBuffer msf_create_file_buffer(size_t bytes) {
     uint8_t * block = (uint8_t *) malloc(bytes);
-    FileBuffer ret = { block, block, block + bytes };
+    MsfFileBuffer ret = { block, block, block + bytes };
     return ret;
 }
 
@@ -143,12 +147,13 @@ static FileBuffer create_file_buffer(size_t bytes) {
 #include <emmintrin.h>
 #endif
 
-static CookedFrame cook_frame(int width, int height, int pitchInBytes, int maxBitDepth, uint8_t * raw) { TimeFunc
+static MsfCookedFrame msf_cook_frame(int width, int height, int pitchInBytes, int maxBitDepth, uint8_t * raw)
+{ MsfTimeFunc
     //bit depth for each channel
     const static int rbitdepths[13] = { 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1 };
     const static int gbitdepths[13] = { 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1 };
     const static int bbitdepths[13] = { 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1, 1 };
-    int pal = 15 - max(3, min(15, maxBitDepth));
+    int pal = 15 - msf_imax(3, msf_imin(15, maxBitDepth));
 
     const static int ditherKernel[16] = {
          0 << 12,  8 << 12,  2 << 12, 10 << 12,
@@ -158,11 +163,11 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int maxBi
     };
 
     bool * used = (bool *) malloc((1 << 15) * sizeof(bool));
-    if (!used) return (CookedFrame) {};
+    if (!used) return (MsfCookedFrame) {};
     uint32_t * cooked = (uint32_t *) malloc(width * height * sizeof(uint32_t));
-    if (!cooked) { free(used); return (CookedFrame) {}; }
+    if (!cooked) { free(used); return (MsfCookedFrame) {}; }
     int count = 0;
-    TimeLoop("do") do {
+    MsfTimeLoop("do") do {
         int rbits = rbitdepths[pal], gbits = gbitdepths[pal], bbits = bbitdepths[pal];
         int paletteSize = 1 << (rbits + gbits + bbits);
         memset(used, 0, paletteSize * sizeof(bool));
@@ -177,13 +182,13 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int maxBi
         int gmask = ((1 << gbits) - 1) << rbits;
         int bmask = ((1 << bbits) - 1) << rbits << gbits;
 
-        TimeLoop("cook") for (int y = 0; y < height; ++y) {
+        MsfTimeLoop("cook") for (int y = 0; y < height; ++y) {
             int x = 0;
 
 			#if defined (__SSE2__) || defined (_M_X64) || _M_IX86_FP == 2
                 __m128i k = _mm_loadu_si128((__m128i *) &ditherKernel[(y & 3) * 4]);
                 __m128i k2 = _mm_or_si128(_mm_srli_epi32(k, rbits), _mm_slli_epi32(_mm_srli_epi32(k, bbits), 16));
-                // TimeLoop("SIMD")
+                // MsfTimeLoop("SIMD")
                 for (; x < width - 3; x += 4) {
                     uint8_t * pixels = &raw[y * pitchInBytes + x * 4];
                     __m128i p = _mm_loadu_si128((__m128i *) pixels);
@@ -207,19 +212,19 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int maxBi
             #endif
 
             //scalar cleanup loop
-            // TimeLoop("scalar")
+            // MsfTimeLoop("scalar")
             for (; x < width; ++x) {
                 uint8_t * p = &raw[y * pitchInBytes + x * 4];
                 int dx = x & 3, dy = y & 3;
                 int k = ditherKernel[dy * 4 + dx];
                 cooked[y * width + x] =
-                    (min(65535, p[2] * bmul + (k >> bbits)) >> (16 - rbits - gbits - bbits) & bmask) |
-                    (min(65535, p[1] * gmul + (k >> gbits)) >> (16 - rbits - gbits        ) & gmask) |
-                     min(65535, p[0] * rmul + (k >> rbits)) >> (16 - rbits                );
+                    (msf_imin(65535, p[2] * bmul + (k >> bbits)) >> (16 - rbits - gbits - bbits) & bmask) |
+                    (msf_imin(65535, p[1] * gmul + (k >> gbits)) >> (16 - rbits - gbits        ) & gmask) |
+                     msf_imin(65535, p[0] * rmul + (k >> rbits)) >> (16 - rbits                );
             }
 
             //mark used colors
-            // TimeLoop("mark used")
+            // MsfTimeLoop("mark used")
             for (int x = 0; x < width; ++x) {
                 used[cooked[y * width + x]] = true;
             }
@@ -227,12 +232,12 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int maxBi
 
         //count used colors
         count = 0;
-        TimeLoop("count") for (int j = 0; j < paletteSize; ++j) {
+        MsfTimeLoop("count") for (int j = 0; j < paletteSize; ++j) {
             count += used[j];
         }
     } while (count >= 256 && ++pal);
 
-    return (CookedFrame) { cooked, used, rbitdepths[pal], gbitdepths[pal], bbitdepths[pal] };
+    return (MsfCookedFrame) { cooked, used, rbitdepths[pal], gbitdepths[pal], bbitdepths[pal] };
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -242,9 +247,9 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int maxBi
 typedef struct {
     uint32_t bits;
     uint16_t bytes[129];
-} BlockBuffer;
+} MsfBlockBuffer;
 
-static inline bool put_code(FileBuffer * buf, BlockBuffer * block, int bits, uint32_t code) {
+static inline bool msf_put_code(MsfFileBuffer * buf, MsfBlockBuffer * block, int bits, uint32_t code) {
     //insert new code into block buffer
     int idx = block->bits / 16;
     int bit = block->bits % 16;
@@ -254,9 +259,9 @@ static inline bool put_code(FileBuffer * buf, BlockBuffer * block, int bits, uin
 
     //flush the block buffer if it's full
     if (block->bits >= 255 * 8) {
-        if (!check(buf, 256)) return false;
-        write_u8(buf, 255);
-        write_data(buf, block->bytes, 255);
+        if (!msf_fb_check(buf, 256)) return false;
+        msf_fb_write_u8(buf, 255);
+        msf_fb_write_data(buf, block->bytes, 255);
 
         block->bits -= 255 * 8;
         block->bytes[0] = block->bytes[127] >> 8 | block->bytes[128] << 8;
@@ -270,20 +275,21 @@ typedef struct {
     int16_t * data;
     size_t len;
     size_t stride;
-} StridedList;
+} MsfStridedList;
 
-static inline void reset(StridedList * lzw, int tableSize, int stride) { //TimeFunc
+static inline void msf_lzw_reset(MsfStridedList * lzw, int tableSize, int stride) { //MsfTimeFunc
     memset(lzw->data, 0xFF, 4096 * stride * sizeof(int16_t));
     lzw->len = tableSize + 2;
     lzw->stride = stride;
 }
 
-static FileBuffer compress_frame(int width, int height, int centiSeconds, CookedFrame frame, CookedFrame previous)
-{ TimeFunc
-    FileBuffer buf = create_file_buffer(1024);
-    if (!buf.block) return (FileBuffer) {};
-    StridedList lzw = { (int16_t *) malloc(4096 * 256 * sizeof(int16_t)) };
-    if (!lzw.data) { free(buf.block); return (FileBuffer) {}; }
+static MsfFileBuffer msf_compress_frame(int width, int height, int centiSeconds,
+										MsfCookedFrame frame, MsfCookedFrame previous)
+{ MsfTimeFunc
+    MsfFileBuffer buf = msf_create_file_buffer(1024);
+    if (!buf.block) return (MsfFileBuffer) {};
+    MsfStridedList lzw = { (int16_t *) malloc(4096 * 256 * sizeof(int16_t)) };
+    if (!lzw.data) { free(buf.block); return (MsfFileBuffer) {}; }
 
     //allocate tlb
     int totalBits = frame.rbits + frame.gbits + frame.bbits;
@@ -294,7 +300,7 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
     typedef struct { uint8_t r, g, b; } Color3;
     Color3 table[256] = {};
     int tableIdx = 1; //we start counting at 1 because 0 is the transparent color
-    TimeLoop("table") for (int i = 0; i < tlbSize; ++i) {
+    MsfTimeLoop("table") for (int i = 0; i < tlbSize; ++i) {
         if (frame.used[i]) {
             tlb[i] = tableIdx;
             int rmask = (1 << frame.rbits) - 1;
@@ -315,7 +321,7 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
         }
     }
 
-    int tableBits = bit_log(tableIdx - 1);
+    int tableBits = msf_bit_log(tableIdx - 1);
     int tableSize = 1 << tableBits;
     bool diff = frame.rbits == previous.rbits && frame.gbits == previous.gbits && frame.bbits == previous.bbits;
 
@@ -325,34 +331,34 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
     memcpy(&headerBytes[13], &width, 2);
     memcpy(&headerBytes[15], &height, 2);
     headerBytes[17] |= tableBits - 1;
-    write_data(&buf, &headerBytes, 18);
+    msf_fb_write_data(&buf, &headerBytes, 18);
 
     //local color table
-    write_data(&buf, table, tableSize * sizeof(Color3));
+    msf_fb_write_data(&buf, table, tableSize * sizeof(Color3));
 
     //image data
-    BlockBuffer block = {};
-    write_u8(&buf, tableBits);
-    reset(&lzw, tableSize, tableIdx);
+    MsfBlockBuffer block = {};
+    msf_fb_write_u8(&buf, tableBits);
+    msf_lzw_reset(&lzw, tableSize, tableIdx);
 
     uint8_t idxBuffer[4096];
     int idxLen = 0;
     int lastCode = diff && frame.pixels[0] == previous.pixels[0]? 0 : tlb[frame.pixels[0]];
-    TimeLoop("compress") for (int i = 1; i < width * height; ++i) {
+    MsfTimeLoop("compress") for (int i = 1; i < width * height; ++i) {
         idxBuffer[idxLen++] = diff && frame.pixels[i] == previous.pixels[i]? 0 : tlb[frame.pixels[i]];
         int code = (&lzw.data[lastCode * lzw.stride])[idxBuffer[idxLen - 1]];
         if (code < 0) {
             //write to code stream
-            int codeBits = bit_log(lzw.len - 1);
-            if (!put_code(&buf, &block, codeBits, lastCode)) { free(lzw.data); return (FileBuffer) {}; }
+            int codeBits = msf_bit_log(lzw.len - 1);
+            if (!msf_put_code(&buf, &block, codeBits, lastCode)) { free(lzw.data); return (MsfFileBuffer) {}; }
 
             //NOTE: [I THINK] we need to leave room for 2 more codes (leftover and end code)
             //      because we don't ever reset the table after writing the leftover bits
             //XXX: is my thinking correct on this one?
             if (lzw.len > 4094) {
                 //reset buffer code table
-                if (!put_code(&buf, &block, codeBits, tableSize)) { free(lzw.data); return (FileBuffer) {}; }
-                reset(&lzw, tableSize, tableIdx);
+                if (!msf_put_code(&buf, &block, codeBits, tableSize)) { free(lzw.data); return (MsfFileBuffer) {}; }
+                msf_lzw_reset(&lzw, tableSize, tableIdx);
             } else {
                 (&lzw.data[lastCode * lzw.stride])[idxBuffer[idxLen - 1]] = lzw.len;
                 ++lzw.len;
@@ -369,20 +375,20 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
     }
 
     //write code for leftover index buffer contents, then the end code
-    if (!put_code(&buf, &block, bit_log(lzw.len - 1), lastCode)) { free(lzw.data); return (FileBuffer) {}; }
-    if (!put_code(&buf, &block, bit_log(lzw.len), tableSize + 1)) { free(lzw.data); return (FileBuffer) {}; } //end code
+    if (!msf_put_code(&buf, &block, msf_bit_log(lzw.len - 1), lastCode)) { free(lzw.data); return (MsfFileBuffer) {}; }
+    if (!msf_put_code(&buf, &block, msf_bit_log(lzw.len), tableSize + 1)) { free(lzw.data); return (MsfFileBuffer) {}; }
     free(lzw.data);
 
     //flush remaining data
     if (block.bits) {
         int bytes = (block.bits + 7) / 8; //round up
-        if (!check(&buf, bytes + 1)) return (FileBuffer) {};
-        write_u8(&buf, bytes);
-        write_data(&buf, block.bytes, bytes);
+        if (!msf_fb_check(&buf, bytes + 1)) return (MsfFileBuffer) {};
+        msf_fb_write_u8(&buf, bytes);
+        msf_fb_write_data(&buf, block.bytes, bytes);
     }
 
-    if (!check(&buf, 1)) return (FileBuffer) {};
-    write_u8(&buf, 0); //terminating block
+    if (!msf_fb_check(&buf, 1)) return (MsfFileBuffer) {};
+    msf_fb_write_u8(&buf, 0); //terminating block
 
     return buf;
 }
@@ -391,9 +397,9 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
 /// Incremental API                                                                                                  ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int width, int height) { TimeFunc
+size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int width, int height) { MsfTimeFunc
     if (!(handle->fp = fopen(outputFilePath, "wb"))) return 0;
-    handle->previousFrame = (CookedFrame) {};
+    handle->previousFrame = (MsfCookedFrame) {};
     handle->width = width;
     handle->height = height;
 
@@ -403,28 +409,29 @@ size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int widt
     memcpy(&headerBytes[8], &height, 2);
     if (!fwrite(&headerBytes, 32, 1, handle->fp)) return 0;
 
-    return max(0, ftell(handle->fp));
+    return msf_imax(0, ftell(handle->fp));
 }
 
 size_t msf_gif_frame(MsfGifState * handle,
 					 uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes, bool upsideDown)
-{ TimeFunc
+{ MsfTimeFunc
     if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
     if (upsideDown) pitchInBytes *= -1;
     uint8_t * raw = upsideDown? &pixelData[handle->width * 4 * (handle->height - 1)] : pixelData;
-    CookedFrame frame = cook_frame(handle->width, handle->height, pitchInBytes, maxBitDepth, raw);
+    MsfCookedFrame frame = msf_cook_frame(handle->width, handle->height, pitchInBytes, maxBitDepth, raw);
     if (!frame.pixels) return 0;
-    FileBuffer buf = compress_frame(handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame);
+    MsfFileBuffer buf =
+    	msf_compress_frame(handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame);
     if (!buf.block) return 0;
     if (!fwrite(buf.block, buf.head - buf.block, 1, handle->fp)) return 0;
     free(buf.block);
     free(frame.used);
     free(handle->previousFrame.pixels);
     handle->previousFrame = frame;
-    return max(0, ftell(handle->fp));
+    return msf_imax(0, ftell(handle->fp));
 }
 
-size_t msf_gif_end(MsfGifState * handle) { TimeFunc
+size_t msf_gif_end(MsfGifState * handle) { MsfTimeFunc
     uint8_t trailingMarker = 0x3B;
     if (!fwrite(&trailingMarker, 1, 1, handle->fp)) return 0;
     size_t bytesWritten = ftell(handle->fp);
@@ -439,52 +446,52 @@ size_t msf_gif_end(MsfGifState * handle) { TimeFunc
 
 typedef struct {
     uint8_t ** frames;
-    CookedFrame * cooked;
-    FileBuffer * buffers;
+    MsfCookedFrame * cooked;
+    MsfFileBuffer * buffers;
     int frameCount, width, height, centiSeconds, maxBitDepth;
     bool upsideDown;
     int frameIdx;
-} ThreadData;
+} MsfGifThreadData;
 
 //TODO: define atomic_post_inc() based on compiler detection
 //      and disable multithreading if we're on an undetected compiler
 
-static void * thread_cook_frames(void * arg) {
-    init_profiling_thread();
-    ThreadData * data = (ThreadData *) arg;
+static void * msf_thread_cook_frames(void * arg) {
+    msf_init_profiling_thread();
+    MsfGifThreadData * data = (MsfGifThreadData *) arg;
     int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     while (frameIdx < data->frameCount) {
         uint8_t * pixels = data->frames[frameIdx];
         int pitchInBytes = data->upsideDown? -data->width * 4 : data->width * 4;
         uint8_t * raw = data->upsideDown? &pixels[data->width * 4 * (data->height - 1)] : pixels;
-        data->cooked[frameIdx] = cook_frame(data->width, data->height, pitchInBytes, data->maxBitDepth, raw);
+        data->cooked[frameIdx] = msf_cook_frame(data->width, data->height, pitchInBytes, data->maxBitDepth, raw);
         frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     }
     return NULL;
 }
 
-static void * thread_compress_frames(void * arg) {
-    init_profiling_thread();
-    ThreadData * data = (ThreadData *) arg;
+static void * msf_thread_compress_frames(void * arg) {
+    msf_init_profiling_thread();
+    MsfGifThreadData * data = (MsfGifThreadData *) arg;
     int frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     while (frameIdx < data->frameCount) {
-        CookedFrame prev = frameIdx == 0? (CookedFrame) {} : data->cooked[frameIdx - 1];
+        MsfCookedFrame prev = frameIdx == 0? (MsfCookedFrame) {} : data->cooked[frameIdx - 1];
         data->buffers[frameIdx] =
-            compress_frame(data->width, data->height, data->centiSeconds, data->cooked[frameIdx], prev);
+            msf_compress_frame(data->width, data->height, data->centiSeconds, data->cooked[frameIdx], prev);
         frameIdx = __sync_fetch_and_add(&data->frameIdx, 1);
     }
     return NULL;
 }
 
-#define MAX_THREADS 64
+#define MSF_GIF_MAX_THREADS 64
 
 #if defined (__unix__) || (defined (__APPLE__) && defined (__MACH__))
 #include <unistd.h>
 #include <pthread.h>
 
-static void fork_join(void * (* func) (void *), void * data, int maxThreads) {
-    int poolSize = min(MAX_THREADS, min(maxThreads, sysconf(_SC_NPROCESSORS_ONLN))) - 1;
-    pthread_t threads[MAX_THREADS] = {};
+static void msf_fork_join(void * (* func) (void *), void * data, int maxThreads) {
+    int poolSize = msf_imin(MSF_GIF_MAX_THREADS, msf_imin(maxThreads, sysconf(_SC_NPROCESSORS_ONLN))) - 1;
+    pthread_t threads[MSF_GIF_MAX_THREADS] = {};
 
     //we have to create a pthread_attr_t to ensure that the threads will be joinable,
     //because threads are not guaranteed to be joinable by default according to the standard
@@ -502,26 +509,26 @@ static void fork_join(void * (* func) (void *), void * data, int maxThreads) {
 }
 #elif defined (_WIN32)
 //TODO: windows version of the above function
-static void fork_join(void * (* func) (void *), void * data, int maxThreads) { func(data); }
+static void msf_fork_join(void * (* func) (void *), void * data, int maxThreads) { func(data); }
 #else
-static void fork_join(void * (* func) (void *), void * data, int maxThreads) { func(data); }
+static void msf_fork_join(void * (* func) (void *), void * data, int maxThreads) { func(data); }
 #endif
 
 size_t msf_gif_save(const char * path, uint8_t ** frames, int frameCount, int width, int height,
     int maxBitDepth, int centiSeconds, bool upsideDown, int maxThreads)
-{ TimeFunc
+{ MsfTimeFunc
     MsfGifState state;
     msf_gif_begin(&state, path, width, height);
 
-    CookedFrame * cookedFrames = (CookedFrame *) malloc(frameCount * sizeof(CookedFrame));
-    FileBuffer * buffers = (FileBuffer *) malloc(frameCount * sizeof(FileBuffer));
-    ThreadData cookData = { frames, cookedFrames, buffers, frameCount,
-                            width, height, centiSeconds, maxBitDepth, upsideDown, 0 };
+    MsfCookedFrame * cookedFrames = (MsfCookedFrame *) malloc(frameCount * sizeof(MsfCookedFrame));
+    MsfFileBuffer * buffers = (MsfFileBuffer *) malloc(frameCount * sizeof(MsfFileBuffer));
+    MsfGifThreadData cookData = { frames, cookedFrames, buffers, frameCount,
+                               width, height, centiSeconds, maxBitDepth, upsideDown, 0 };
 
     //NOTE: from empirical tests, it seems like both cooking and compressing benefit slightly from hyperthreading
-    fork_join(thread_cook_frames, &cookData, min(frameCount, maxThreads));
+    msf_fork_join(msf_thread_cook_frames, &cookData, msf_imin(frameCount, maxThreads));
     cookData.frameIdx = 0;
-    fork_join(thread_compress_frames, &cookData, min(frameCount, maxThreads));
+    msf_fork_join(msf_thread_compress_frames, &cookData, msf_imin(frameCount, maxThreads));
 
     for (int i = 0; i < frameCount; ++i) {
         fwrite(buffers[i].block, buffers[i].head - buffers[i].block, 1, state.fp);

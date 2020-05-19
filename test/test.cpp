@@ -1,5 +1,3 @@
-//TODO: write timing code that doesn't rely on instrumentation inside giff.c
-
 #include "../msf_gif.h"
 #include "trace.hpp"
 #include "List.hpp"
@@ -13,10 +11,7 @@ struct RawBlob {
     int pixels[1];
 };
 
-// #include <unistd.h>
-
 int main() {
-    // printf("logical cores available: %ld\n", sysconf(_SC_NPROCESSORS_ONLN));
     const char * names[] = {
         "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "odd", "tiles",
         "anchor", "always-in-front", "flip",
@@ -39,7 +34,6 @@ int main() {
     List<TimerInfo> timers = {};
     init_profiling_trace();
 
-    //TODO: write both dithered and non-dithered versions each to their own folder?
     //TODO: automatically regression-test against known good versions of the GIFs?
 #if 1
     for (int i = 0; i < blobs.len; ++i) {
@@ -59,7 +53,8 @@ int main() {
         printf("writing %24s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
             path, blob->width, blob->height, blob->frames, blob->centiSeconds); fflush(stdout);
         double pre = get_time();
-        size_t = msf_gif_save(path, frames.data, frames.len, blob->width, blob->height, 15, blob->centiSeconds, flipped, 8);
+        size_t out =
+            msf_gif_save(path, frames.data, frames.len, blob->width, blob->height, 15, blob->centiSeconds, flipped, 8);
         timers.add({ get_time() - pre, (size_t)(blob->frames * blob->width * blob->height * 4), out });
     #else
         RawBlob * blob = blobs[i];
