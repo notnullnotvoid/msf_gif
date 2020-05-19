@@ -101,8 +101,8 @@ typedef struct {
     uint8_t * end;
 } FileBuffer;
 
-static void check(FileBuffer * buf, size_t bytes) {
-    if (buf->head + bytes < buf->end) return;
+static bool check(FileBuffer * buf, size_t bytes) {
+    if (buf->head + bytes < buf->end) return true;
 
     size_t byte = buf->head - buf->block;
     size_t size = buf->end - buf->block;
@@ -112,9 +112,12 @@ static void check(FileBuffer * buf, size_t bytes) {
         size = size * 2 + 1;
     }
 
-    buf->block = (uint8_t *) realloc(buf->block, size);
+    void * moved = realloc(buf->block, size);
+    if (!moved) { free(buf->block); return false; }
+    buf->block = moved;
     buf->head = buf->block + byte;
     buf->end = buf->block + size;
+    return true;
 }
 
 static inline void write_data(FileBuffer * buf, void * data, size_t bytes) {
@@ -155,7 +158,9 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int maxBi
     };
 
     bool * used = (bool *) malloc((1 << 15) * sizeof(bool));
+    if (!used) return (CookedFrame) {};
     uint32_t * cooked = (uint32_t *) malloc(width * height * sizeof(uint32_t));
+    if (!cooked) { free(used); return (CookedFrame) {}; }
     int count = 0;
     TimeLoop("do") do {
         int rbits = rbitdepths[pal], gbits = gbitdepths[pal], bbits = bbitdepths[pal];
@@ -239,7 +244,7 @@ typedef struct {
     uint16_t bytes[129];
 } BlockBuffer;
 
-static inline void put_code(FileBuffer * buf, BlockBuffer * block, int bits, uint32_t code) {
+static inline bool put_code(FileBuffer * buf, BlockBuffer * block, int bits, uint32_t code) {
     //insert new code into block buffer
     int idx = block->bits / 16;
     int bit = block->bits % 16;
@@ -249,7 +254,7 @@ static inline void put_code(FileBuffer * buf, BlockBuffer * block, int bits, uin
 
     //flush the block buffer if it's full
     if (block->bits >= 255 * 8) {
-        check(buf, 256);
+        if (!check(buf, 256)) return false;
         write_u8(buf, 255);
         write_data(buf, block->bytes, 255);
 
@@ -257,6 +262,8 @@ static inline void put_code(FileBuffer * buf, BlockBuffer * block, int bits, uin
         block->bytes[0] = block->bytes[127] >> 8 | block->bytes[128] << 8;
         memset(block->bytes + 1, 0, 256);
     }
+
+    return true;
 }
 
 typedef struct {
@@ -274,7 +281,9 @@ static inline void reset(StridedList * lzw, int tableSize, int stride) { //TimeF
 static FileBuffer compress_frame(int width, int height, int centiSeconds, CookedFrame frame, CookedFrame previous)
 { TimeFunc
     FileBuffer buf = create_file_buffer(1024);
+    if (!buf.block) return (FileBuffer) {};
     StridedList lzw = { (int16_t *) malloc(4096 * 256 * sizeof(int16_t)) };
+    if (!lzw.data) { free(buf.block); return (FileBuffer) {}; }
 
     //allocate tlb
     int totalBits = frame.rbits + frame.gbits + frame.bbits;
@@ -335,14 +344,14 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
         if (code < 0) {
             //write to code stream
             int codeBits = bit_log(lzw.len - 1);
-            put_code(&buf, &block, codeBits, lastCode);
+            if (!put_code(&buf, &block, codeBits, lastCode)) { free(lzw.data); return (FileBuffer) {}; }
 
             //NOTE: [I THINK] we need to leave room for 2 more codes (leftover and end code)
             //      because we don't ever reset the table after writing the leftover bits
             //XXX: is my thinking correct on this one?
             if (lzw.len > 4094) {
                 //reset buffer code table
-                put_code(&buf, &block, codeBits, tableSize);
+                if (!put_code(&buf, &block, codeBits, tableSize)) { free(lzw.data); return (FileBuffer) {}; }
                 reset(&lzw, tableSize, tableIdx);
             } else {
                 (&lzw.data[lastCode * lzw.stride])[idxBuffer[idxLen - 1]] = lzw.len;
@@ -360,21 +369,21 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
     }
 
     //write code for leftover index buffer contents, then the end code
-    put_code(&buf, &block, bit_log(lzw.len - 1), lastCode);
-    put_code(&buf, &block, bit_log(lzw.len), tableSize + 1); //end code
+    if (!put_code(&buf, &block, bit_log(lzw.len - 1), lastCode)) { free(lzw.data); return (FileBuffer) {}; }
+    if (!put_code(&buf, &block, bit_log(lzw.len), tableSize + 1)) { free(lzw.data); return (FileBuffer) {}; } //end code
+    free(lzw.data);
 
     //flush remaining data
     if (block.bits) {
         int bytes = (block.bits + 7) / 8; //round up
-        check(&buf, bytes + 1);
+        if (!check(&buf, bytes + 1)) return (FileBuffer) {};
         write_u8(&buf, bytes);
         write_data(&buf, block.bytes, bytes);
     }
 
-    check(&buf, 1);
+    if (!check(&buf, 1)) return (FileBuffer) {};
     write_u8(&buf, 0); //terminating block
 
-    free(lzw.data);
     return buf;
 }
 
@@ -392,7 +401,7 @@ size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int widt
     char headerBytes[33] = "GIF89a\0\0\0\0\x10\0\0" "\x21\xFF\x0BNETSCAPE2.0\x03\x01\0\0\0";
     memcpy(&headerBytes[6], &width, 2);
     memcpy(&headerBytes[8], &height, 2);
-    fwrite(&headerBytes, 32, 1, handle->fp);
+    if (!fwrite(&headerBytes, 32, 1, handle->fp)) return 0;
 
     return max(0, ftell(handle->fp));
 }
@@ -404,8 +413,10 @@ size_t msf_gif_frame(MsfGifState * handle,
     if (upsideDown) pitchInBytes *= -1;
     uint8_t * raw = upsideDown? &pixelData[handle->width * 4 * (handle->height - 1)] : pixelData;
     CookedFrame frame = cook_frame(handle->width, handle->height, pitchInBytes, maxBitDepth, raw);
+    if (!frame.pixels) return 0;
     FileBuffer buf = compress_frame(handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame);
-    fwrite(buf.block, buf.head - buf.block, 1, handle->fp);
+    if (!buf.block) return 0;
+    if (!fwrite(buf.block, buf.head - buf.block, 1, handle->fp)) return 0;
     free(buf.block);
     free(frame.used);
     free(handle->previousFrame.pixels);
@@ -415,7 +426,7 @@ size_t msf_gif_frame(MsfGifState * handle,
 
 size_t msf_gif_end(MsfGifState * handle) { TimeFunc
     uint8_t trailingMarker = 0x3B;
-    fwrite(&trailingMarker, 1, 1, handle->fp);
+    if (!fwrite(&trailingMarker, 1, 1, handle->fp)) return 0;
     size_t bytesWritten = ftell(handle->fp);
     fclose(handle->fp);
     free(handle->previousFrame.pixels);
