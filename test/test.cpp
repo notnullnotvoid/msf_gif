@@ -43,6 +43,7 @@ int main() {
     //TODO: automatically regression-test against known good versions of the GIFs?
 #if 1
     for (int i = 0; i < blobs.len; ++i) {
+    #if 0
         RawBlob * blob = blobs[i];
         bool flipped = blob->height < 0;
         if (flipped) blob->height *= -1;
@@ -58,9 +59,27 @@ int main() {
         printf("writing %24s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
             path, blob->width, blob->height, blob->frames, blob->centiSeconds); fflush(stdout);
         double pre = get_time();
-        size_t out;
-        out = msf_gif_save(path, frames.data, frames.len, blob->width, blob->height, 15, blob->centiSeconds, flipped, 8);
+        size_t = msf_gif_save(path, frames.data, frames.len, blob->width, blob->height, 15, blob->centiSeconds, flipped, 8);
         timers.add({ get_time() - pre, (size_t)(blob->frames * blob->width * blob->height * 4), out });
+    #else
+        RawBlob * blob = blobs[i];
+        bool flipped = blob->height < 0;
+        if (flipped) blob->height *= -1;
+
+        char * path = dsprintf(nullptr, "new/%s.gif", names[i]);
+        TimeScope(path);
+        printf("writing %24s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
+            path, blob->width, blob->height, blob->frames, blob->centiSeconds); fflush(stdout);
+        double pre = get_time();
+        MsfGifState handle;
+        msf_gif_begin(&handle, path, blob->width, blob->height);
+        for (int j = 0; j < blob->frames; ++j) {
+            msf_gif_frame(&handle,
+                (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 15, 0, flipped);
+        }
+        size_t out = msf_gif_end(&handle);
+        timers.add({ get_time() - pre, (size_t)(blob->frames * blob->width * blob->height * 4), out });
+    #endif
     }
 #else
     for (int i = 0; i < blobs.len; ++i) {

@@ -30,7 +30,7 @@ extern "C" {
  * @param height    Image height in pixels - must be the same for the whole gif.
  * @return          The size of the file written so far, or 0 on error.
  */
-size_t msf_gif_begin(MsfGifState * state, const char * path, int width, int height);
+size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int width, int height);
 /**
  * @param pixels        Pointer to raw framebuffer data. Data must be contiguous in memory and in RGBA8 format.
  * @param centiSeconds  How long this frame should be displayed for.
@@ -43,7 +43,8 @@ size_t msf_gif_begin(MsfGifState * state, const char * path, int width, int heig
  * @param upsideDown    Whether the image should be flipped vertically on output - useful e.g. with opengl framebuffers.
  * @return              The size of the file written so far, or 0 on error.
  */
-size_t msf_gif_frame(MsfGifState * state, uint8_t * pixels, int centiSeconds, int maxBitDepth, bool upsideDown);
+size_t msf_gif_frame(MsfGifState * handle,
+					 uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes, bool upsideDown);
 /**
  * @return          The size of the written file in bytes, or 0 on error.
  */
@@ -381,41 +382,43 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
 /// Incremental API                                                                                                  ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-size_t msf_gif_begin(MsfGifState * state, const char * path, int width, int height) { TimeFunc
-    if (!(state->fp = fopen(path, "wb"))) return 0;
-    state->previousFrame = (CookedFrame) {};
-    state->width = width;
-    state->height = height;
+size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int width, int height) { TimeFunc
+    if (!(handle->fp = fopen(outputFilePath, "wb"))) return 0;
+    handle->previousFrame = (CookedFrame) {};
+    handle->width = width;
+    handle->height = height;
 
     //NOTE: because __attribute__((__packed__)) is annoyingly non-cross-platform, we do this unreadable weirdness
     char headerBytes[33] = "GIF89a\0\0\0\0\x10\0\0" "\x21\xFF\x0BNETSCAPE2.0\x03\x01\0\0\0";
     memcpy(&headerBytes[6], &width, 2);
     memcpy(&headerBytes[8], &height, 2);
-    fwrite(&headerBytes, 32, 1, state->fp);
+    fwrite(&headerBytes, 32, 1, handle->fp);
 
-    return max(0, ftell(state->fp));
+    return max(0, ftell(handle->fp));
 }
 
-size_t msf_gif_frame(MsfGifState * state, uint8_t * pixels, int centiSeconds, int maxBitDepth, bool upsideDown)
+size_t msf_gif_frame(MsfGifState * handle,
+					 uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes, bool upsideDown)
 { TimeFunc
-    int pitchInBytes = upsideDown? -state->width * 4 : state->width * 4;
-    uint8_t * raw = upsideDown? &pixels[state->width * 4 * (state->height - 1)] : pixels;
-    CookedFrame frame = cook_frame(state->width, state->height, pitchInBytes, maxBitDepth, raw);
-    FileBuffer buf = compress_frame(state->width, state->height, centiSeconds, frame, state->previousFrame);
-    fwrite(buf.block, buf.head - buf.block, 1, state->fp);
+    if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
+    if (upsideDown) pitchInBytes *= -1;
+    uint8_t * raw = upsideDown? &pixelData[handle->width * 4 * (handle->height - 1)] : pixelData;
+    CookedFrame frame = cook_frame(handle->width, handle->height, pitchInBytes, maxBitDepth, raw);
+    FileBuffer buf = compress_frame(handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame);
+    fwrite(buf.block, buf.head - buf.block, 1, handle->fp);
     free(buf.block);
     free(frame.used);
-    free(state->previousFrame.pixels);
-    state->previousFrame = frame;
-    return max(0, ftell(state->fp));
+    free(handle->previousFrame.pixels);
+    handle->previousFrame = frame;
+    return max(0, ftell(handle->fp));
 }
 
-size_t msf_gif_end(MsfGifState * state) { TimeFunc
+size_t msf_gif_end(MsfGifState * handle) { TimeFunc
     uint8_t trailingMarker = 0x3B;
-    fwrite(&trailingMarker, 1, 1, state->fp);
-    size_t bytesWritten = ftell(state->fp);
-    fclose(state->fp);
-    free(state->previousFrame.pixels);
+    fwrite(&trailingMarker, 1, 1, handle->fp);
+    size_t bytesWritten = ftell(handle->fp);
+    fclose(handle->fp);
+    free(handle->previousFrame.pixels);
     return bytesWritten;
 }
 
@@ -423,7 +426,7 @@ size_t msf_gif_end(MsfGifState * state) { TimeFunc
 /// Non-Incremental API                                                                                              ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-typedef struct { //TODO: rename to reflect its new use
+typedef struct {
     uint8_t ** frames;
     CookedFrame * cooked;
     FileBuffer * buffers;
