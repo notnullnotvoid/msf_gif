@@ -1,0 +1,9 @@
+jo_gif2 : ~1160 seconds
+jo_gif : ~425 seconds
+gif_h dithered : ~315 seconds
+gif_h dithered 7bpp : ~240 seconds
+gif_h : ~75 seconds
+msf_gif : ~14 seconds
+msf_gif simd : ~8 seconds
+msf_gif threaded: ~4 seconds
+msf_gif simd threaded : ~2 seconds

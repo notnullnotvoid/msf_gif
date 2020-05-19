@@ -95,7 +95,7 @@ static CookedFrame cook_frame(int width, int height, int pitchInBytes, int maxBi
         TimeLoop("cook") for (int y = 0; y < height; ++y) {
             int x = 0;
 
-            #if defined (__SSE2__) || _M_IX86_FP == 2
+            #if defined (__SSE2__) || _M_IX86_FP == 2 //TODO: what is this second conditional again?
                 __m128i k = _mm_loadu_si128((__m128i *) &ditherKernel[(y & 3) * 4]);
                 __m128i k2 = _mm_or_si128(_mm_srli_epi32(k, rbits), _mm_slli_epi32(_mm_srli_epi32(k, bbits), 16));
                 // TimeLoop("SIMD")
@@ -322,7 +322,7 @@ static FileBuffer compress_frame(int width, int height, int centiSeconds, Cooked
 ////////////////////////////////////////////////////////////////////////////////
 
 size_t msf_gif_begin(MsfGifState * state, const char * path, int width, int height) { TimeFunc
-    if (!(state->fp = fopen(path, "wb"))) return NULL;
+    if (!(state->fp = fopen(path, "wb"))) return 0;
     state->previousFrame = (CookedFrame) {};
     state->width = width;
     state->height = height;
@@ -345,13 +345,13 @@ size_t msf_gif_begin(MsfGifState * state, const char * path, int width, int heig
     };
     header.width = width;
     header.height = height;
-    if (!fwrite(&header, sizeof(header), 1, state->fp)) return NULL;
+    if (!fwrite(&header, sizeof(header), 1, state->fp)) return 0;
 
     // //NOTE: if __attribute__((__packed__)) turns out to be a cross-platform nightmare, I'll just do this:
-    char headerBytes[33] = "GIF89a\0\0\0\0\x10\0\0" "\x21\xFF\x0BNETSCAPE2.0\x03\x01\0\0\0";
-    memcpy(&headerBytes[6], &width, 2);
-    memcpy(&headerBytes[8], &height, 2);
-    fwrite(&headerBytes, 32, 1, state->fp);
+    // char headerBytes[33] = "GIF89a\0\0\0\0\x10\0\0" "\x21\xFF\x0BNETSCAPE2.0\x03\x01\0\0\0";
+    // memcpy(&headerBytes[6], &width, 2);
+    // memcpy(&headerBytes[8], &height, 2);
+    // fwrite(&headerBytes, 32, 1, state->fp);
 
     return max(0, ftell(state->fp));
 }
@@ -448,6 +448,7 @@ static void fork_join(void * (* func) (void *), void * data, int maxThreads) {
 }
 #elif defined (_WIN32)
 //TODO: windows version of the above function
+static void fork_join(void * (* func) (void *), void * data, int maxThreads) { func(data); }
 #else
 static void fork_join(void * (* func) (void *), void * data, int maxThreads) { func(data); }
 #endif

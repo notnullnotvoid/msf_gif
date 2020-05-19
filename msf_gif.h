@@ -28,7 +28,7 @@ extern "C" {
  * @param path      Relative path to the output file, as per fopen().
  * @param width     Image width in pixels - must be the same for the whole gif.
  * @param height    Image height in pixels - must be the same for the whole gif.
- * @return opaque   The size of the file written so far, or 0 on error.
+ * @return          The size of the file written so far, or 0 on error.
  */
 size_t msf_gif_begin(MsfGifState * state, const char * path, int width, int height);
 /**

@@ -1,34 +1,42 @@
 
-TODO:
-- document non-incremental API options
+RC TODOs:
+- create branches
+	- cleanup repo
+	- remove multithreading from the RC
+- add pitch parameter
+	- 0 treated as a default or left alone?
 - error handling
+	- how to signal what kind of thing went wrong? (mem alloc failure, invalid param, unable to create/write file)
+- combine header and implementation
+- preprocess out profiling instrumentation unless it's explicitly enabled
+- MSVC compatibility
+- prefix all names at global scope
+- re-examine the SSE preprocessor stuff
+- make sure documentation is up-to-date
+	- include usage example in the documentation?
 
-- HMN post
+
+
+
 
 - allow resetting thread id for more readable output from trace.cpp?
-- win+MSVC compatibility
-	- intrinsics
-	- pthreads
+- trace.cpp cumulative time reporting tools
+- windows-compatible multithreading
 - per-frame timing in the non-incremental API?
-- pass frame times as milliseconds and do error accumulation in the library?
-- combine header and implementation
-	- add boilerplate to toggle profiling macros
-- re-allow specifying a stride per row???
-- rename everything at global scope to avoid name conflicts
-- write documentation
 
-- API for returning a block of encoded memory instead of writing it out with <stdio.h> functions
 - allow custom allocators
 - async incremental API
 - runtime option for channel importance order?
 - increase maximum bit depth to 16?
 - bitfield for `used` array????
+- API for returning a block of encoded memory instead of writing it out with <stdio.h> functions
+	- or stb_image_write.h style replacement of fopen/fwrite/fclose with user-provided functions
 
 
 
 documentation:
 	- in file
-	- in repository
+	- in repository/readme
 	- things to cover:
 		- use case for this library
 			- things this library specifically doesn't do
