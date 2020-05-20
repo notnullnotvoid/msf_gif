@@ -83,7 +83,7 @@ size_t msf_gif_end(MsfGifState * handle);
 #ifdef __GNUC__
 static inline int msf_bit_log(int i) { return 32 - __builtin_clz(i); }
 #else //MSVC
-static inline int msf_bit_log(int i) { unsigned long idx; _BitScanReverse(&idx, i) + 1; return idx; }
+static inline int msf_bit_log(int i) { unsigned long idx; _BitScanReverse(&idx, i); return idx + 1; }
 #endif
 static inline int msf_imin(int a, int b) { return a < b? a : b; }
 static inline int msf_imax(int a, int b) { return b < a? a : b; }
