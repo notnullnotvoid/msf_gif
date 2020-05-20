@@ -1,3 +1,5 @@
+//version 1.0
+
 #ifndef MSF_GIF_HPP
 #define MSF_GIF_HPP
 
@@ -22,31 +24,35 @@ typedef struct {
 extern "C" {
 #endif //__cplusplus
 
+
+
 /**
- * @param path      Relative path to the output file, as per fopen().
- * @param width     Image width in pixels - must be the same for the whole gif.
- * @param height    Image height in pixels - must be the same for the whole gif.
- * @return          The size of the file written so far, or 0 on error.
+ * @param outputFilePath       Relative path to the output file, as per fopen().
+ * @param width                Image width in pixels - must be the same for the whole gif.
+ * @param height               Image height in pixels - must be the same for the whole gif.
+ * @return                     The size of the file written so far, or 0 on error.
  */
 size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int width, int height);
 
 /**
- * @param pixels        Pointer to raw framebuffer data. Data must be contiguous in memory and in RGBA8 format.
- * @param centiSeconds  How long this frame should be displayed for.
- * @param maxBitDepth   Limits how many bits per pixel can be used when quantizing the gif.
- *                      The actual bit depth chosen for a given frame will be equal or less than the supplied maximum,
- *                      depending on the variety of colors used in the frame.
- *                      `maxBitDepth` will be clamped between 3 and 15. The recommended default is 15.
- *                      Lowering this value can result in faster exports and smaller gifs, but the quality will suffer.
- *                      Please experiment with this value to find what works best for your particular application.
- * @param upsideDown    Whether the image should be flipped vertically on output - useful e.g. with opengl framebuffers.
- * @return              The size of the file written so far, or 0 on error.
+ * @param pixelData            Pointer to raw framebuffer data. Rows must be contiguous in memory, in RGBA8 format.
+ * @param centiSecondsPerFrame How many hundredths of a second this frame should be displayed for.
+ * @param maxBitDepth          Limits how many bits per pixel can be used when quantizing the gif.
+ *                             The actual bit depth chosen for a given frame will be less than or equal to
+ *                             the supplied maximum, depending on the variety of colors used in the frame.
+ *                             `maxBitDepth` will be clamped between 3 and 15. The recommended default is 15.
+ *                             Lowering this value can result in faster exports and smaller gifs,
+ *                             but the quality may suffer.
+ *                             Please experiment with this value to find what works best for your application.
+ * @param pitchInBytes         The number of bytes from the beginning of one row of pixels to the beginning of the next.
+ * @param upsideDown           Whether the image should be flipped vertically on output (e.g. an opengl framebuffer)
+ * @return                     The size of the file written so far, or 0 on error.
  */
 size_t msf_gif_frame(MsfGifState * handle,
-					 uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes, bool upsideDown);
+                     uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes, bool upsideDown);
 
 /**
- * @return          The size of the written file in bytes, or 0 on error.
+ * @return                     The size of the written file in bytes, or 0 on error.
  */
 size_t msf_gif_end(MsfGifState * handle);
 
@@ -172,7 +178,7 @@ static MsfCookedFrame msf_cook_frame(int width, int height, int pitchInBytes, in
         MsfTimeLoop("cook") for (int y = 0; y < height; ++y) {
             int x = 0;
 
-			#if defined (__SSE2__) || defined (_M_X64) || _M_IX86_FP == 2
+            #if defined (__SSE2__) || defined (_M_X64) || _M_IX86_FP == 2
                 __m128i k = _mm_loadu_si128((__m128i *) &ditherKernel[(y & 3) * 4]);
                 __m128i k2 = _mm_or_si128(_mm_srli_epi32(k, rbits), _mm_slli_epi32(_mm_srli_epi32(k, bbits), 16));
                 // MsfTimeLoop("SIMD")
@@ -271,7 +277,7 @@ static inline void msf_lzw_reset(MsfStridedList * lzw, int tableSize, int stride
 }
 
 static MsfFileBuffer msf_compress_frame(int width, int height, int centiSeconds,
-										MsfCookedFrame frame, MsfCookedFrame previous)
+                                        MsfCookedFrame frame, MsfCookedFrame previous)
 { MsfTimeFunc
     MsfFileBuffer buf = msf_create_file_buffer(1024);
     if (!buf.block) return (MsfFileBuffer) {};
@@ -400,7 +406,7 @@ size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int widt
 }
 
 size_t msf_gif_frame(MsfGifState * handle,
-					 uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes, bool upsideDown)
+                     uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes, bool upsideDown)
 { MsfTimeFunc
     if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
     if (upsideDown) pitchInBytes *= -1;
@@ -408,7 +414,7 @@ size_t msf_gif_frame(MsfGifState * handle,
     MsfCookedFrame frame = msf_cook_frame(handle->width, handle->height, pitchInBytes, maxBitDepth, raw);
     if (!frame.pixels) return 0;
     MsfFileBuffer buf =
-    	msf_compress_frame(handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame);
+        msf_compress_frame(handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame);
     if (!buf.block) return 0;
     if (!fwrite(buf.block, buf.head - buf.block, 1, handle->fp)) return 0;
     free(buf.block);
