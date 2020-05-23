@@ -1,7 +1,7 @@
 //version 1.0
 
-#ifndef MSF_GIF_HPP
-#define MSF_GIF_HPP
+#ifndef MSF_GIF_H
+#define MSF_GIF_H
 
 #include <stdint.h>
 #include <stddef.h>
@@ -436,4 +436,4 @@ size_t msf_gif_end(MsfGifState * handle) { MsfTimeFunc
 
 #endif //MSF_GIF_IMPL
 
-#endif //MSF_GIF_HPP
+#endif //MSF_GIF_H
