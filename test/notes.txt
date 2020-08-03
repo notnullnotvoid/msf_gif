@@ -1,7 +1,9 @@
 
 RC TODOs:
+- remove error handling of memory allocation failure because I've decided that's stupid
 - make sure documentation is up-to-date
 	- include usage example in the documentation?
+	- document memory usage
 	- readme
 
 

@@ -27,7 +27,7 @@ extern "C" {
 
 
 /**
- * @param outputFilePath       Relative path to the output file, as per fopen().
+ * @param outputFilePath       Relative path to the output file, as a null-terminated string of UTF-8 bytes.
  * @param width                Image width in pixels - must be the same for the whole gif.
  * @param height               Image height in pixels - must be the same for the whole gif.
  * @return                     The size of the file written so far, or 0 on error.
@@ -392,6 +392,7 @@ static MsfFileBuffer msf_compress_frame(int width, int height, int centiSeconds,
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int width, int height) { MsfTimeFunc
+    //TODO: convert this to UTF-16 to correctly handle unicode on windows!!!
     if (!(handle->fp = fopen(outputFilePath, "wb"))) return 0;
     handle->previousFrame = (MsfCookedFrame) {};
     handle->width = width;
@@ -401,7 +402,7 @@ size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int widt
     char headerBytes[33] = "GIF89a\0\0\0\0\x10\0\0" "\x21\xFF\x0BNETSCAPE2.0\x03\x01\0\0\0";
     memcpy(&headerBytes[6], &width, 2);
     memcpy(&headerBytes[8], &height, 2);
-    if (!fwrite(&headerBytes, 32, 1, handle->fp)) return 0;
+    if (!fwrite(&headerBytes, 32, 1, handle->fp)) { fclose(handle->fp); return 0; }
 
     return msf_imax(0, ftell(handle->fp));
 }
@@ -413,11 +414,11 @@ size_t msf_gif_frame(MsfGifState * handle,
     if (upsideDown) pitchInBytes *= -1;
     uint8_t * raw = upsideDown? &pixelData[handle->width * 4 * (handle->height - 1)] : pixelData;
     MsfCookedFrame frame = msf_cook_frame(handle->width, handle->height, pitchInBytes, maxBitDepth, raw);
-    if (!frame.pixels) return 0;
+    if (!frame.pixels) { fclose(handle->fp); return 0; }
     MsfFileBuffer buf =
         msf_compress_frame(handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame);
-    if (!buf.block) return 0;
-    if (!fwrite(buf.block, buf.head - buf.block, 1, handle->fp)) return 0;
+    if (!buf.block) { fclose(handle->fp); return 0; }
+    if (!fwrite(buf.block, buf.head - buf.block, 1, handle->fp)) { fclose(handle->fp); return 0; }
     free(buf.block);
     free(frame.used);
     free(handle->previousFrame.pixels);
@@ -427,7 +428,7 @@ size_t msf_gif_frame(MsfGifState * handle,
 
 size_t msf_gif_end(MsfGifState * handle) { MsfTimeFunc
     uint8_t trailingMarker = 0x3B;
-    if (!fwrite(&trailingMarker, 1, 1, handle->fp)) return 0;
+    if (!fwrite(&trailingMarker, 1, 1, handle->fp)) { fclose(handle->fp); return 0; }
     size_t bytesWritten = ftell(handle->fp);
     fclose(handle->fp);
     free(handle->previousFrame.pixels);
