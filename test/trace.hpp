@@ -8,7 +8,7 @@
 #define TRUE_INLINE __forceinline
 #define __PRETTY_FUNCTION__ __FUNCSIG__
 #else
-#define TRUE_INLINE __attribute_((always_inline))
+#define TRUE_INLINE __attribute__((always_inline))
 #endif
 
 struct TraceEvent {
