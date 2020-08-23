@@ -12,3 +12,4 @@ giff
 *.xcodeproj
 *.o
 trace.json
+*.exe
