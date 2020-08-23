@@ -1,6 +1,6 @@
 A single-header animated GIF exporter, suitable for recording gifs in realtime.
 * **Easy to use**. Single-header C89 code, depending only on the C standard library. Simple and minimal API.
-* **High-quality results**. Uses a straightforward color selection and dithering algorithm that is guaranteed to provide equal fidelity for all colors in the image, thereby avoiding the palette selection artifacts that are typical of the kind of frequency-based adaptive color quantization algorithms used in most gif encoders. See the side-by-side comparison below for an example.
+* **High-quality results**. Uses a straightforward palette selection and dithering algorithm that is guaranteed to provide equal fidelity for all areas of the image, thereby avoiding the artifacts that are typical of the kind of frequency-based adaptive color quantization algorithms used in most gif encoders. See the side-by-side comparison below for an example.
 * **Small file sizes**. Uses delta encoding between frames and a compression-friendly dithering kernel, resulting in significantly smaller files than most gif encoders, without sacrificing quality.
 * **Fast**. Designed for speed, and uses SSE where available to encode at hundreds of megabytes a second, several times faster than comparable gif libraries.
 * **Public domain**. Also available under MIT license. See the bottom of the source file for license text.
