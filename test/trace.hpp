@@ -3,6 +3,14 @@
 
 #include <stdint.h>
 
+#ifdef _MSC_VER
+#include <intrin.h>
+#define TRUE_INLINE __forceinline
+#define __PRETTY_FUNCTION__ __FUNCSIG__
+#else
+#define TRUE_INLINE __attribute_((always_inline))
+#endif
+
 struct TraceEvent {
     const char * name;
     uint64_t timestamp;
@@ -28,7 +36,7 @@ void init_profiling_trace();
 void init_profiling_thread();
 void print_profiling_trace();
 
-static inline __attribute__((always_inline)) void trace_begin_event(const char * name) {
+static inline TRUE_INLINE void trace_begin_event(const char * name) {
     *traceArrays->beginHead++ = { name, __rdtsc() };
     if (traceArrays->beginHead == traceArrays->beginEnd) {
         traceArrays->beginHead = traceArrays->beginList;
@@ -37,7 +45,7 @@ static inline __attribute__((always_inline)) void trace_begin_event(const char *
     }
 }
 
-static inline __attribute__((always_inline)) void trace_end_event(const char * name) {
+static inline TRUE_INLINE void trace_end_event(const char * name) {
     *traceArrays->endHead++ = { name, __rdtsc() };
     if (traceArrays->endHead == traceArrays->endEnd) {
         traceArrays->beginHead = traceArrays->beginList;
@@ -46,7 +54,7 @@ static inline __attribute__((always_inline)) void trace_end_event(const char * n
     }
 }
 
-static inline __attribute__((always_inline)) void trace_instant_event(const char * name) {
+static inline TRUE_INLINE void trace_instant_event(const char * name) {
     *traceArrays->instantHead++ = { name, __rdtsc() };
     if (traceArrays->instantHead == traceArrays->instantEnd) {
         traceArrays->beginHead = traceArrays->beginList;
@@ -57,11 +65,11 @@ static inline __attribute__((always_inline)) void trace_instant_event(const char
 
 struct ScopedTraceTimer {
     const char * name;
-    __attribute__((always_inline)) ScopedTraceTimer(const char * name_) {
+    TRUE_INLINE ScopedTraceTimer(const char * name_) {
         name = name_;
         trace_begin_event(name);
     }
-    __attribute__((always_inline)) ~ScopedTraceTimer() {
+    TRUE_INLINE ~ScopedTraceTimer() {
         trace_end_event(name);
     }
 };

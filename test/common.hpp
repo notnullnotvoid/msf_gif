@@ -102,7 +102,9 @@ static inline char * read_entire_file(const char * filepath) {
 #include <stdarg.h>
 
 //allocates a buffer large enough to fit resulting string, and `sprintf`s to it
-__attribute__((format(printf, 2, 3)))
+#ifndef _MSC_VER
+	__attribute__((format(printf, 2, 3)))
+#endif
 static inline char * dsprintf(char * buf, const char * fmt, ...) {
     size_t len = buf? strlen(buf) : 0;
     va_list args1, args2;

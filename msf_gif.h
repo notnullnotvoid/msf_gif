@@ -143,6 +143,8 @@ static MsfFileBuffer msf_create_file_buffer(size_t bytes) {
 
 static MsfCookedFrame msf_cook_frame(int width, int height, int pitchInBytes, int maxBitDepth, uint8_t * raw)
 { MsfTimeFunc
+	MsfCookedFrame ret = {0};
+
     //bit depth for each channel
     const static int rbitdepths[13] = { 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1, 1 };
     const static int gbitdepths[13] = { 5, 5, 5, 4, 4, 4, 3, 3, 3, 2, 2, 2, 1 };
@@ -157,9 +159,9 @@ static MsfCookedFrame msf_cook_frame(int width, int height, int pitchInBytes, in
     };
 
     bool * used = (bool *) malloc((1 << 15) * sizeof(bool));
-    if (!used) return (MsfCookedFrame) {};
+    if (!used) return ret;
     uint32_t * cooked = (uint32_t *) malloc(width * height * sizeof(uint32_t));
-    if (!cooked) { free(used); return (MsfCookedFrame) {}; }
+    if (!cooked) { free(used); return ret; }
     int count = 0;
     MsfTimeLoop("do") do {
         int rbits = rbitdepths[pal], gbits = gbitdepths[pal], bbits = bbitdepths[pal];
@@ -231,7 +233,12 @@ static MsfCookedFrame msf_cook_frame(int width, int height, int pitchInBytes, in
         }
     } while (count >= 256 && ++pal);
 
-    return (MsfCookedFrame) { cooked, used, rbitdepths[pal], gbitdepths[pal], bbitdepths[pal] };
+	ret.pixels = cooked;
+	ret.used = used;
+	ret.rbits = rbitdepths[pal];
+	ret.gbits = gbitdepths[pal];
+	ret.bbits = bbitdepths[pal];
+	return ret;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -280,10 +287,12 @@ static inline void msf_lzw_reset(MsfStridedList * lzw, int tableSize, int stride
 static MsfFileBuffer msf_compress_frame(int width, int height, int centiSeconds,
                                         MsfCookedFrame frame, MsfCookedFrame previous)
 { MsfTimeFunc
+	MsfFileBuffer ret = {0};
+
     MsfFileBuffer buf = msf_create_file_buffer(1024);
-    if (!buf.block) return (MsfFileBuffer) {};
+    if (!buf.block) return ret;
     MsfStridedList lzw = { (int16_t *) malloc(4096 * 256 * sizeof(int16_t)) };
-    if (!lzw.data) { free(buf.block); return (MsfFileBuffer) {}; }
+    if (!lzw.data) { free(buf.block); return ret; }
 
     //allocate tlb
     int totalBits = frame.rbits + frame.gbits + frame.bbits;
@@ -292,7 +301,7 @@ static MsfFileBuffer msf_compress_frame(int width, int height, int centiSeconds,
 
     //generate palette
     typedef struct { uint8_t r, g, b; } Color3;
-    Color3 table[256] = {};
+    Color3 table[256] = { {0} };
     int tableIdx = 1; //we start counting at 1 because 0 is the transparent color
     MsfTimeLoop("table") for (int i = 0; i < tlbSize; ++i) {
         if (frame.used[i]) {
@@ -307,11 +316,10 @@ static MsfFileBuffer msf_compress_frame(int width, int height, int centiSeconds,
             r <<= 8 - frame.rbits;
             g <<= 8 - frame.gbits;
             b <<= 8 - frame.bbits;
-            table[tableIdx++] = (Color3) {
-                (uint8_t) (r | r >> frame.rbits | r >> (frame.rbits * 2) | r >> (frame.rbits * 3)),
-                (uint8_t) (g | g >> frame.gbits | g >> (frame.gbits * 2) | g >> (frame.gbits * 3)),
-                (uint8_t) (b | b >> frame.bbits | b >> (frame.bbits * 2) | b >> (frame.bbits * 3)),
-            };
+            table[tableIdx].r = r | r >> frame.rbits | r >> (frame.rbits * 2) | r >> (frame.rbits * 3);
+            table[tableIdx].g = g | g >> frame.gbits | g >> (frame.gbits * 2) | g >> (frame.gbits * 3);
+            table[tableIdx].b = b | b >> frame.bbits | b >> (frame.bbits * 2) | b >> (frame.bbits * 3);
+            ++tableIdx;
         }
     }
 
@@ -331,7 +339,7 @@ static MsfFileBuffer msf_compress_frame(int width, int height, int centiSeconds,
     msf_fb_write_data(&buf, table, tableSize * sizeof(Color3));
 
     //image data
-    MsfBlockBuffer block = {};
+    MsfBlockBuffer block = {0};
     msf_fb_write_u8(&buf, tableBits);
     msf_lzw_reset(&lzw, tableSize, tableIdx);
 
@@ -344,14 +352,14 @@ static MsfFileBuffer msf_compress_frame(int width, int height, int centiSeconds,
         if (code < 0) {
             //write to code stream
             int codeBits = msf_bit_log(lzw.len - 1);
-            if (!msf_put_code(&buf, &block, codeBits, lastCode)) { free(lzw.data); return (MsfFileBuffer) {}; }
+            if (!msf_put_code(&buf, &block, codeBits, lastCode)) { free(lzw.data); return ret; }
 
             //NOTE: [I THINK] we need to leave room for 2 more codes (leftover and end code)
             //      because we don't ever reset the table after writing the leftover bits
             //XXX: is my thinking correct on this one?
             if (lzw.len > 4094) {
                 //reset buffer code table
-                if (!msf_put_code(&buf, &block, codeBits, tableSize)) { free(lzw.data); return (MsfFileBuffer) {}; }
+                if (!msf_put_code(&buf, &block, codeBits, tableSize)) { free(lzw.data); return ret; }
                 msf_lzw_reset(&lzw, tableSize, tableIdx);
             } else {
                 (&lzw.data[lastCode * lzw.stride])[idxBuffer[idxLen - 1]] = lzw.len;
@@ -369,19 +377,19 @@ static MsfFileBuffer msf_compress_frame(int width, int height, int centiSeconds,
     }
 
     //write code for leftover index buffer contents, then the end code
-    if (!msf_put_code(&buf, &block, msf_bit_log(lzw.len - 1), lastCode)) { free(lzw.data); return (MsfFileBuffer) {}; }
-    if (!msf_put_code(&buf, &block, msf_bit_log(lzw.len), tableSize + 1)) { free(lzw.data); return (MsfFileBuffer) {}; }
+    if (!msf_put_code(&buf, &block, msf_bit_log(lzw.len - 1), lastCode)) { free(lzw.data); return ret; }
+    if (!msf_put_code(&buf, &block, msf_bit_log(lzw.len), tableSize + 1)) { free(lzw.data); return ret; }
     free(lzw.data);
 
     //flush remaining data
     if (block.bits) {
         int bytes = (block.bits + 7) / 8; //round up
-        if (!msf_fb_check(&buf, bytes + 1)) return (MsfFileBuffer) {};
+        if (!msf_fb_check(&buf, bytes + 1)) return ret;
         msf_fb_write_u8(&buf, bytes);
         msf_fb_write_data(&buf, block.bytes, bytes);
     }
 
-    if (!msf_fb_check(&buf, 1)) return (MsfFileBuffer) {};
+    if (!msf_fb_check(&buf, 1)) return ret;
     msf_fb_write_u8(&buf, 0); //terminating block
 
     return buf;
@@ -394,7 +402,8 @@ static MsfFileBuffer msf_compress_frame(int width, int height, int centiSeconds,
 size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int width, int height) { MsfTimeFunc
     //TODO: convert this to UTF-16 to correctly handle unicode on windows!!!
     if (!(handle->fp = fopen(outputFilePath, "wb"))) return 0;
-    handle->previousFrame = (MsfCookedFrame) {};
+    MsfCookedFrame empty = {0}; //god I hate C89...
+    handle->previousFrame = empty;
     handle->width = width;
     handle->height = height;
 

@@ -48,7 +48,11 @@ void init_profiling_thread() {
 	traceArrays->instantList = (TraceEvent *) malloc(NUM_TRACE_EVENTS * sizeof(TraceEvent));
 	traceArrays->instantHead = traceArrays->instantList;
 	traceArrays->instantEnd  = traceArrays->instantList + NUM_TRACE_EVENTS;
-	int threadNum = __sync_fetch_and_add(&traceThreadCount, 1);
+	#ifdef _MSC_VER
+		int threadNum = InterlockedIncrement((LONG *) &traceThreadCount) - 1;
+	#else
+		int threadNum = __sync_fetch_and_add(&traceThreadCount, 1);
+	#endif
 	traceThreads[threadNum] = traceArrays;
 }
 
