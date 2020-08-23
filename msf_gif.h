@@ -1,3 +1,29 @@
+/*
+HOW TO USE:
+
+    In exactly one translation unit (.c or .cpp file), #define MSF_GIF_IMPL before including the header, like so:
+
+    #define MSF_GIF_IMPL
+    #include "msf_gif.h"
+
+    Everywhere else, just include the header like normal.
+
+
+USAGE EXAMPLE:
+
+    int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 15;
+    MsfGifState gifState = {};
+    msf_gif_begin(&gifState, "example.gif", width, height);
+    msf_gif_frame(&gifState, ..., bitDepth, centisecondsPerFrame, width * 4, false); //frame 1
+    msf_gif_frame(&gifState, ..., bitDepth, centisecondsPerFrame, width * 4, false); //frame 2
+    msf_gif_frame(&gifState, ..., bitDepth, centisecondsPerFrame, width * 4, false); //frame 3, etc...
+    msf_gif_end(&gifState);
+
+Detailed function documentation can be found below.
+
+See end of file for license information.
+*/
+
 //version 1.0
 
 #ifndef MSF_GIF_H
@@ -24,8 +50,6 @@ typedef struct {
 extern "C" {
 #endif //__cplusplus
 
-
-
 /**
  * @param outputFilePath       Relative path to the output file, as a null-terminated string of UTF-8 bytes.
  * @param width                Image width in pixels - must be the same for the whole gif.
@@ -37,6 +61,7 @@ size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int widt
 /**
  * @param pixelData            Pointer to raw framebuffer data. Rows must be contiguous in memory, in RGBA8 format.
  * @param centiSecondsPerFrame How many hundredths of a second this frame should be displayed for.
+ *                             Note: This being specified in centiseconds is a limitation of the GIF format.
  * @param maxBitDepth          Limits how many bits per pixel can be used when quantizing the gif.
  *                             The actual bit depth chosen for a given frame will be less than or equal to
  *                             the supplied maximum, depending on the variety of colors used in the frame.
