@@ -6,6 +6,12 @@ A single-header animated GIF exporter, suitable for recording gifs in realtime.
 * **Public domain**. Also available under MIT license, if the company you work for is scared of the public domain, as some are.
 * **Actively maintained**. This is not abandonware! If there is a problem or a feature you feel is missing, tell me and there's a good chance I can add it. Or submit a pull request if you're feeling generous - the code is relatively short and simple.
 
+## Examples
+
+[![Example gif from Escher](examples/flip.gif)](https://eschergame.com/)
+
+[![Example gif from DIWide](examples/diwide.gif)](https://github.com/notnullnotvoid/DIWide)
+
 ## How to use
 
 In **exactly one** translation unit (.c or .cpp file), `#define MSF_GIF_IMPL` before including the header, like so:
