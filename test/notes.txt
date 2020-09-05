@@ -1,6 +1,6 @@
 
 RC TODOs:
-- test custom allocator support
+- test custom file ops
 - document custom allocator support
 - document memory usage?
 - remove error handling of memory allocation failure because I've decided that's stupid
@@ -14,8 +14,6 @@ RC TODOs:
 
 
 
-- API for returning a block of encoded memory instead of writing it out with <stdio.h> functions
-	- or stb_image_write.h style replacement of fopen/fwrite/fclose with user-provided functions
 - async/multithreaded API
 - runtime option for channel importance order?
 - increase maximum bit depth to 16?
