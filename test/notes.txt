@@ -1,27 +1,30 @@
 
 RC TODOs:
+- test custom allocator support
+- document custom allocator support
+- document memory usage?
 - remove error handling of memory allocation failure because I've decided that's stupid
-- make sure documentation is up-to-date
-	- include usage example in the documentation?
-	- document memory usage
-	- readme
+	- actually, now that I've added custom allocator support, and custom allocators might fail for various reasons, maybe don't axe this?
 
 
 
+- POSSIBLE OPTIMIZATION: if there are fewer pixels left in the frame than codes available in the lzw table, can we memset less of it?
+	- how often will this happen, and how much will we save on average?
+	- NOTE: the boundary is actually probably more like 2x the lzw table size, as after ever unique color has been seen by the encoder, it will take at least 2 pixels to create a new table entry
 
+
+
+- API for returning a block of encoded memory instead of writing it out with <stdio.h> functions
+	- or stb_image_write.h style replacement of fopen/fwrite/fclose with user-provided functions
+- async/multithreaded API
+- runtime option for channel importance order?
+- increase maximum bit depth to 16?
+	- requires re-auditing bake code to make sure this won't cause problems
+- bitfield for `used` array????
+- figure out if we can be less conservative with the trailing codes?
 
 - allow resetting thread id for more readable output from trace.cpp?
 - trace.cpp cumulative time reporting tools
-- windows-compatible multithreading
-- per-frame timing in the non-incremental API?
-
-- allow custom allocators
-- async incremental API
-- runtime option for channel importance order?
-- increase maximum bit depth to 16?
-- bitfield for `used` array????
-- API for returning a block of encoded memory instead of writing it out with <stdio.h> functions
-	- or stb_image_write.h style replacement of fopen/fwrite/fclose with user-provided functions
 
 
 

@@ -3,13 +3,18 @@
 #include "List.hpp"
 #include "common.hpp"
 
-#include "gif.h"
-#include "jo_gif.cpp"
+// #include "gif.h"
+// #include "jo_gif.cpp"
 
 struct RawBlob {
     int width, height, frames, centiSeconds;
     int pixels[1];
 };
+
+extern int totalReallocCalls;
+extern int totalReallocCopies;
+extern int totalReallocData;
+extern int totalReallocBytesCopied;
 
 int main() {
     const char * names[] = {
@@ -66,16 +71,24 @@ int main() {
         printf("writing %24s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
             path, blob->width, blob->height, blob->frames, blob->centiSeconds); fflush(stdout);
         double pre = get_time();
-        MsfGifState handle;
+        MsfGifState handle = {};
+        handle.customAllocatorContext = path;
         msf_gif_begin(&handle, path, blob->width, blob->height);
         for (int j = 0; j < blob->frames; ++j) {
+            // handle.customAllocatorContext = dsprintf(nullptr, "%s frame %d", path, j);
             msf_gif_frame(&handle,
                 (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 15, 0, flipped);
         }
+        handle.customAllocatorContext = path;
         size_t out = msf_gif_end(&handle);
         timers.add({ get_time() - pre, (size_t)(blob->frames * blob->width * blob->height * 4), out });
     #endif
     }
+
+    printf("totalReallocCalls: %d\n", totalReallocCalls);
+    printf("totalReallocCopies: %d\n", totalReallocCopies);
+    printf("totalReallocData: %d\n", totalReallocData);
+    printf("totalReallocBytesCopied: %d\n", totalReallocBytesCopied);
 #else
     for (int i = 0; i < blobs.len; ++i) {
         RawBlob * blob = blobs[i];

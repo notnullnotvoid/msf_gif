@@ -94,6 +94,8 @@ size_t msf_gif_end(MsfGifState * handle);
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #ifdef MSF_GIF_IMPL
+#ifndef MSF_GIF_ALREADY_IMPLEMENTED_IN_THIS_TRANSLATION_UNIT
+#define MSF_GIF_ALREADY_IMPLEMENTED_IN_THIS_TRANSLATION_UNIT
 
 //ensure the library user has either define all of malloc/realloc/free, or none
 #if defined(MSF_GIF_MALLOC) && defined(MSF_GIF_REALLOC) && defined(MSF_GIF_FREE)
@@ -408,7 +410,8 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
 
             //NOTE: [I THINK] we need to leave room for 2 more codes (leftover and end code)
             //      because we don't ever reset the table after writing the leftover bits
-            //XXX: is my thinking correct on this one?
+            //Q: is my thinking correct on this one?
+            //Q: why can't we just check when writing out those codes? too verbose? can't we factor to a funtion?
             if (lzw.len > 4094) {
                 //reset buffer code table
                 if (!msf_put_code(allocContext, &buf, &block, codeBits, tableSize)) {
@@ -502,6 +505,7 @@ size_t msf_gif_end(MsfGifState * handle) { MsfTimeFunc
     return bytesWritten;
 }
 
+#endif //MSF_GIF_ALREADY_IMPLEMENTED_IN_THIS_TRANSLATION_UNIT
 #endif //MSF_GIF_IMPL
 
 /*
