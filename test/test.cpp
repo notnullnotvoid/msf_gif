@@ -11,10 +11,12 @@ struct RawBlob {
     int pixels[1];
 };
 
-extern int totalReallocCalls;
-extern int totalReallocCopies;
-extern int totalReallocData;
-extern int totalReallocBytesCopied;
+extern "C" {
+    extern int totalReallocCalls;
+    extern int totalReallocCopies;
+    extern int totalReallocData;
+    extern int totalReallocBytesCopied;
+}
 
 int main() {
     const char * names[] = {
@@ -77,8 +79,9 @@ int main() {
         msf_gif_begin(&handle, path, blob->width, blob->height);
         for (int j = 0; j < blob->frames; ++j) {
             // handle.customAllocatorContext = dsprintf(nullptr, "%s frame %d", path, j);
+            int pitch = flipped? -blob->width * 4 : blob->width * 4;
             msf_gif_frame(&handle,
-                (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 15, -blob->width * 4);
+                (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 15, pitch);
         }
         handle.customAllocatorContext = path;
         size_t out = msf_gif_end(&handle);

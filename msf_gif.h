@@ -500,6 +500,7 @@ size_t msf_gif_frame(MsfGifState * handle,
                      uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes)
 { MsfTimeFunc
     if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
+    //TODO: is this calculation even right!? doesn't it need to take into account the pitch!?!?
     uint8_t * raw = pitchInBytes < 0? &pixelData[handle->width * 4 * (handle->height - 1)] : pixelData;
     MsfCookedFrame frame = msf_cook_frame(handle->customAllocatorContext,
         handle->width, handle->height, pitchInBytes, maxBitDepth, raw);
