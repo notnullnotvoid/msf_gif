@@ -22,9 +22,9 @@ REM cl /c /Ox /std:c++17 /W2 test.cpp /Fo:test.o
 REM cl msf_gif.o trace.o test.o /Fe:giff.exe
 
 rem MSVC config (no profiling)
-cl /c /Ox /W2 msf_gif.c /Fo:msf_gif.o
-cl /c /Ox /std:c++17 /W2 trace.cpp /Fo:trace.o
-cl /c /Ox /std:c++17 /W2 test.cpp /Fo:test.o
+cl /c /O2 /W3 msf_gif.c /Fo:msf_gif.o
+cl /c /O2 /W2 trace.cpp /Fo:trace.o
+cl /c /O2 /W2 test.cpp /Fo:test.o
 cl msf_gif.o trace.o test.o /Fe:giff.exe
 
 del test.o trace.o msf_gif.o

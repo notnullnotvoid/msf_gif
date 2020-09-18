@@ -78,7 +78,7 @@ int main() {
         for (int j = 0; j < blob->frames; ++j) {
             // handle.customAllocatorContext = dsprintf(nullptr, "%s frame %d", path, j);
             msf_gif_frame(&handle,
-                (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 15, 0, flipped);
+                (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 15, -blob->width * 4);
         }
         handle.customAllocatorContext = path;
         size_t out = msf_gif_end(&handle);
