@@ -1,5 +1,5 @@
 A single-header animated GIF exporter, suitable for recording gifs in realtime.
-* **Easy to use**. Single-header C89 code, depending only on the C standard library. Simple and minimal API.
+* **Easy to use**. Single-header C code, depending only on the C standard library. Simple and minimal API.
 * **High-quality results**. Uses a straightforward palette selection and dithering algorithm that is guaranteed to provide equal fidelity for all areas of the image, thereby avoiding the artifacts that are typical of the kind of frequency-based adaptive color quantization algorithms used in most gif encoders. See the side-by-side comparison below for an example.
 * **Small file sizes**. Uses delta encoding between frames and a compression-friendly dithering kernel, resulting in significantly smaller files than most gif encoders, without sacrificing quality.
 * **Fast**. Designed for speed, and uses SSE where available to encode at hundreds of megabytes a second, several times faster than comparable gif libraries.
@@ -38,3 +38,10 @@ msf_gif_frame(&gifState, ..., bitDepth, centisecondsPerFrame, width * 4, false);
 msf_gif_end(&gifState);
 ```
 Detailed function documentation can be found in the header.
+
+### A note on image resizing
+
+If the data source you're making a gif from is high-resolution, the resulting gif may be prohibitively large and take a long time to export. To make a gif with a smaller resolution, you have a few options:
+1. The best option, if capturing a gif directly from a game or other application, is to render the scene a second time to a smaller-resolution texture. This is what I do, but it can be tricky to set up, and could be expensive depending on the scene.
+2. The second-best option is to render to a texture and downscale on the GPU. This can be surprisingly tricky to get right, and quality may suffer. You can do your own higher-quality resampling in a compute shader or fragment shader, but that's more difficult.
+3. The third-best option, and the easiest, is to downscale on the CPU. For this you can use [stb_image_resize.h](https://github.com/nothings/stb/blob/master/stb_image_resize.h), which provides high-quality results, but can be very slow. I'm currently looking into creating a much faster alternative. Watch this space!
