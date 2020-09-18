@@ -73,6 +73,7 @@ int main() {
         double pre = get_time();
         MsfGifState handle = {};
         handle.customAllocatorContext = path;
+        handle.customOutputContext = path;
         msf_gif_begin(&handle, path, blob->width, blob->height);
         for (int j = 0; j < blob->frames; ++j) {
             // handle.customAllocatorContext = dsprintf(nullptr, "%s frame %d", path, j);
@@ -152,11 +153,11 @@ int main() {
         totals.time += timers[i].time;
         totals.in += timers[i].in;
         totals.out += timers[i].out;
-        printf("%16s      time: %6.3f   in: %4.2f GB/s   out: %5.2f MB/s\n",
+        printf("%16s      time: %5.2f s   in: %4.2f GB/s   out: %5.2f MB/s\n",
             names[i], timers[i].time,
             timers[i].in / timers[i].time / 1024 / 1024 / 1024, timers[i].out / timers[i].time / 1024 / 1024);
     }
-    printf("\n%16s      time: %6.3f   in: %4.2f GB/s   out: %5.2f MB/s\n",
+    printf("\n%16s      time: %5.2f s  in: %4.2f GB/s   out: %5.2f MB/s\n",
         "totals", totals.time, totals.in / totals.time / 1024 / 1024 / 1024, totals.out / totals.time / 1024 / 1024);
 
     trace_end_event("main");

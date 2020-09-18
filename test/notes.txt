@@ -1,6 +1,5 @@
 
 RC TODOs:
-- test custom file ops
 - document custom allocator support
 - document memory usage?
 - remove error handling of memory allocation failure because I've decided that's stupid

@@ -43,6 +43,7 @@ typedef struct {
     void * fp;
     MsfCookedFrame previousFrame;
     int width, height;
+    int totalBytesWritten;
     void * customAllocatorContext;
     void * customOutputContext;
 } MsfGifState;
@@ -101,7 +102,7 @@ size_t msf_gif_end(MsfGifState * handle);
 #if defined(MSF_GIF_MALLOC) && defined(MSF_GIF_REALLOC) && defined(MSF_GIF_FREE)
 #elif !defined(MSF_GIF_MALLOC) && !defined(MSF_GIF_REALLOC) && !defined(MSF_GIF_FREE)
 #else
-#error "You must either define all of MSF_GIF_MALLOC, MSF_GIF_REALLOC, and MSF_GIF_FREE, or define none of them"
+#error "You must either define all of MSF_GIF_MALLOC, MSF_GIF_REALLOC, and MSF_GIF_FREE, or none of them"
 #endif
 
 //provide default allocator definitions that redirect to the standard global allocator
@@ -113,10 +114,10 @@ size_t msf_gif_end(MsfGifState * handle);
 #endif
 
 //ensure the library user has either defined all of fopen/fwrite/fclose, or none
-#if defined(MSF_GIF_FOPEN) && defined(MSF_GIF_FWRITE) && defined(MSF_GIF_FCLOSE)
-#elif !defined(MSF_GIF_FOPEN) && !defined(MSF_GIF_FWRITE) && !defined(MSF_GIF_FCLOSE)
+#if defined(MSF_GIF_FOPEN) && defined(MSF_GIF_FWRITE) && defined(MSF_GIF_FCLOSE) && defined(MSF_GIF_FTELL)
+#elif !defined(MSF_GIF_FOPEN) && !defined(MSF_GIF_FWRITE) && !defined(MSF_GIF_FCLOSE) && !defined(MSF_GIF_FTELL)
 #else
-#error "You must either define all of MSF_GIF_FOPEN, MSF_GIF_FWRITE, and MSF_GIF_FCLOSE, or define none of them"
+#error "You must either define all of MSF_GIF_FOPEN, MSF_GIF_FWRITE, MSF_GIF_FCLOSE, and MSF_GIF_FTELL, or none of them"
 #endif
 
 //provide default file ops that redirect to the standard library ones
@@ -125,6 +126,7 @@ size_t msf_gif_end(MsfGifState * handle);
 #define MSF_GIF_FOPEN(contextPointer, filePath) fopen(filePath, "wb")
 #define MSF_GIF_FWRITE(contextPointer, filePointer, dataPointer, dataSize) fwrite(dataPointer, dataSize, 1, filePointer)
 #define MSF_GIF_FCLOSE(contextPointer, filePointer) fclose(filePointer)
+#define MSF_GIF_FTELL(contextPointer, filePointer) ftell(filePointer)
 #endif
 
 //instrumentation for capturing profiling traces (useless for the library user, but useful for the library author)
@@ -394,7 +396,7 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
     int tableSize = 1 << tableBits;
     bool diff = frame.rbits == previous.rbits && frame.gbits == previous.gbits && frame.bbits == previous.bbits;
 
-    //NOTE: because __attribute__((__packed__)) is annoyingly non-cross-platform, we do this unreadable weirdness
+    //NOTE: because __attribute__((__packed__)) is annoyingly compiler-specific, we do this unreadable weirdness
     char headerBytes[19] = "\x21\xF9\x04\x05\0\0\0\0" "\x2C\0\0\0\0\0\0\0\0\x80";
     memcpy(&headerBytes[4], &centiSeconds, 2);
     memcpy(&headerBytes[13], &width, 2);
@@ -476,12 +478,13 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
 size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int width, int height) { MsfTimeFunc
     //TODO: convert this to UTF-16 to correctly handle unicode on windows!!!
     if (!(handle->fp = MSF_GIF_FOPEN(handle->customOutputContext, outputFilePath))) return 0;
-    MsfCookedFrame empty = {0}; //god I hate C89...
+    MsfCookedFrame empty = {0}; //god I hate MSVC...
     handle->previousFrame = empty;
     handle->width = width;
     handle->height = height;
+    handle->totalBytesWritten = 0;
 
-    //NOTE: because __attribute__((__packed__)) is annoyingly non-cross-platform, we do this unreadable weirdness
+    //NOTE: because __attribute__((__packed__)) is annoyingly compiler-specific, we do this unreadable weirdness
     char headerBytes[33] = "GIF89a\0\0\0\0\x10\0\0" "\x21\xFF\x0BNETSCAPE2.0\x03\x01\0\0\0";
     memcpy(&headerBytes[6], &width, 2);
     memcpy(&headerBytes[8], &height, 2);
@@ -489,8 +492,8 @@ size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int widt
         MSF_GIF_FCLOSE(handle->customOutputContext, handle->fp);
         return 0;
     }
-
-    return msf_imax(0, ftell(handle->fp));
+    handle->totalBytesWritten += 32;
+    return handle->totalBytesWritten;
 }
 
 size_t msf_gif_frame(MsfGifState * handle,
@@ -509,25 +512,27 @@ size_t msf_gif_frame(MsfGifState * handle,
         MSF_GIF_FCLOSE(handle->customOutputContext, handle->fp);
         return 0;
     }
+    handle->totalBytesWritten += buf.head - buf.block;
     MSF_GIF_FREE(handle->customAllocatorContext, buf.block, buf.end - buf.block);
     MSF_GIF_FREE(handle->customAllocatorContext, frame.used, msfUsedAllocSize);
     MSF_GIF_FREE(handle->customAllocatorContext,
         handle->previousFrame.pixels, handle->width * handle->height * sizeof(uint32_t));
     handle->previousFrame = frame;
-    return msf_imax(0, ftell(handle->fp));
+    return handle->totalBytesWritten;
 }
 
 size_t msf_gif_end(MsfGifState * handle) { MsfTimeFunc
+    int allocSize = handle->width * handle->height * sizeof(uint32_t);
     uint8_t trailingMarker = 0x3B;
     if (!MSF_GIF_FWRITE(handle->customOutputContext, handle->fp, &trailingMarker, 1)) {
         MSF_GIF_FCLOSE(handle->customOutputContext, handle->fp);
+        MSF_GIF_FREE(handle->customAllocatorContext, handle->previousFrame.pixels, allocSize);
         return 0;
     }
-    size_t bytesWritten = ftell(handle->fp);
-    MSF_GIF_FCLOSE(handle->customOutputContext, handle->fp);
-    MSF_GIF_FREE(handle->customAllocatorContext,
-        handle->previousFrame.pixels, handle->width * handle->height * sizeof(uint32_t));
-    return bytesWritten;
+    handle->totalBytesWritten += 1;
+    if (MSF_GIF_FCLOSE(handle->customOutputContext, handle->fp)) return 0;
+    MSF_GIF_FREE(handle->customAllocatorContext, handle->previousFrame.pixels, allocSize);
+    return handle->totalBytesWritten;
 }
 
 #endif //MSF_GIF_ALREADY_IMPLEMENTED_IN_THIS_TRANSLATION_UNIT
