@@ -20,7 +20,7 @@ extern "C" {
 
 int main() {
     const char * names[] = {
-        "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "odd", "tiles",
+        "bouncy", "diwide-large", "diwide", "floor", "increase",// "keyhole", "odd", "tiles",
         "anchor", "always-in-front", "flip",
         // "sky",
         // "keyhole",

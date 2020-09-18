@@ -16,16 +16,16 @@ REM clang msf_gif.o trace.o test.o -o giff.exe
 
 
 rem MSVC++ config (w/profiling)
-REM cl /c /Ox /std:c++17 /W2 msf_gif.cpp /Fo:msf_gif.o
-REM cl /c /Ox /std:c++17 /W2 trace.cpp /Fo:trace.o
-REM cl /c /Ox /std:c++17 /W2 test.cpp /Fo:test.o
-REM cl msf_gif.o trace.o test.o /Fe:giff.exe
-
-rem MSVC config (no profiling)
-cl /c /O2 /W3 msf_gif.c /Fo:msf_gif.o
-cl /c /O2 /W2 trace.cpp /Fo:trace.o
-cl /c /O2 /W2 test.cpp /Fo:test.o
+cl /c /Ox /std:c++17 /W2 msf_gif.cpp /Fo:msf_gif.o
+cl /c /Ox /std:c++17 /W2 trace.cpp /Fo:trace.o
+cl /c /Ox /std:c++17 /W2 test.cpp /Fo:test.o
 cl msf_gif.o trace.o test.o /Fe:giff.exe
 
-del test.o trace.o msf_gif.o
+rem MSVC config (no profiling)
+REM cl /c /O2 /W3 msf_gif.c /Fo:msf_gif.o
+REM cl /c /O2 /W2 trace.cpp /Fo:trace.o
+REM cl /c /O2 /W2 test.cpp /Fo:test.o
+REM cl msf_gif.o trace.o test.o /Fe:giff.exe
+
+REM del test.o trace.o msf_gif.o
 giff.exe

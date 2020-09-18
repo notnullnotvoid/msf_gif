@@ -123,9 +123,9 @@ size_t msf_gif_end(MsfGifState * handle);
 #if !defined(MSF_GIF_FOPEN)
 #include <stdio.h> //FILE ops (fopen, etc.)
 #define MSF_GIF_FOPEN(contextPointer, filePath) fopen(filePath, "wb")
-#define MSF_GIF_FWRITE(contextPointer, filePointer, dataPointer, dataSize) fwrite(dataPointer, dataSize, 1, filePointer)
-#define MSF_GIF_FCLOSE(contextPointer, filePointer) fclose(filePointer)
-#define MSF_GIF_FTELL(contextPointer, filePointer) ftell(filePointer)
+#define MSF_GIF_FWRITE(contextPointer, filePointer, dataPointer, dataSize) fwrite(dataPointer, dataSize, 1, (FILE *) filePointer)
+#define MSF_GIF_FCLOSE(contextPointer, filePointer) fclose((FILE *) filePointer)
+#define MSF_GIF_FTELL(contextPointer, filePointer) ftell((FILE *) filePointer)
 #endif
 
 //instrumentation for capturing profiling traces (useless for the library user, but useful for the library author)
@@ -142,6 +142,7 @@ size_t msf_gif_end(MsfGifState * handle);
 #include <string.h> //memcpy
 
 //TODO: provide a version of bit_log() for obscure compilers that might lack intrinsics?
+//TODO: use compiler-specific notation to force-inline functions currently marked inline
 #ifdef __GNUC__
 static inline int msf_bit_log(int i) { return 32 - __builtin_clz(i); }
 #else //MSVC
