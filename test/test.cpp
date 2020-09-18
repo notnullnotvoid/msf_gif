@@ -3,8 +3,8 @@
 #include "List.hpp"
 #include "common.hpp"
 
-#include "gif.h"
-#include "jo_gif.cpp"
+// #include "gif.h"
+// #include "jo_gif.cpp"
 
 struct RawBlob {
     int width, height, frames, centiSeconds;
@@ -70,7 +70,7 @@ int main() {
         msf_gif_begin(&handle, path, blob->width, blob->height);
         for (int j = 0; j < blob->frames; ++j) {
             msf_gif_frame(&handle,
-                (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 15, 0, flipped);
+                (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 15, -blob->width * 4);
         }
         size_t out = msf_gif_end(&handle);
         timers.add({ get_time() - pre, (size_t)(blob->frames * blob->width * blob->height * 4), out });
