@@ -72,7 +72,7 @@ size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int widt
  *                             but the quality may suffer.
  *                             Please experiment with this value to find what works best for your application.
  * @param pitchInBytes         The number of bytes from the beginning of one row of pixels to the beginning of the next.
- *                             If you want to flip the image at no extra cost, just pass in a negative pitch.
+ *                             If you want to flip the image, just pass in a negative pitch.
  * @return                     The size of the file written so far, or 0 on error.
  */
 size_t msf_gif_frame(MsfGifState * handle,
@@ -123,7 +123,7 @@ size_t msf_gif_end(MsfGifState * handle);
 #if !defined(MSF_GIF_FOPEN)
 #include <stdio.h> //FILE ops (fopen, etc.)
 #define MSF_GIF_FOPEN(contextPointer, filePath) fopen(filePath, "wb")
-#define MSF_GIF_FWRITE(contextPointer, filePointer, dataPointer, dataSize) fwrite(dataPointer, dataSize, 1, (FILE *) filePointer)
+#define MSF_GIF_FWRITE(contextPointer, filePointer, data, dataSize) fwrite(data, dataSize, 1, (FILE *) filePointer)
 #define MSF_GIF_FCLOSE(contextPointer, filePointer) fclose((FILE *) filePointer)
 #define MSF_GIF_FTELL(contextPointer, filePointer) ftell((FILE *) filePointer)
 #endif
