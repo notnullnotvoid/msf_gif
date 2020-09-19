@@ -1,6 +1,5 @@
 
 RC TODOs:
-- document custom allocator support
 - document memory usage?
 - remove error handling of memory allocation failure because I've decided that's stupid
 	- actually, now that I've added custom allocator support, and custom allocators might fail for various reasons, maybe don't axe this?

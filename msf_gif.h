@@ -19,12 +19,26 @@ USAGE EXAMPLE:
     msf_gif_frame(&gifState, ..., bitDepth, centisecondsPerFrame, width * 4); //frame 3, etc...
     msf_gif_end(&gifState);
 
-Detailed function documentation can be found below.
+Detailed function documentation can be found in the header section below.
+
+REPLACING MALLOC AND FWRITE:
+
+    This library uses malloc+realloc+free internally for memory allocation and fopen+fwrite+fclose for file output.
+    To facilitate custom memory management and I/O, these calls go through macros, which can be redefined.
+    These macros provide additional information (such as previous allocation size when calling realloc and free),
+    as well as a context pointer, in order to be usable with a wider range of allocators.
+    In order to replace them, simply #define the relevant macros in the same place where you #define MSF_GIF_IMPL.
+    The allocator macros are MSF_GIF_MALLOC, MSF_GIF_REALLOC, and MSF_GIF_FREE.
+    The file output macros are MSF_GIF_FOPEN, MSF_GIF_FWRITE, and MSF_GIF_FCLOSE.
+    Search for their default definitions below to see the exactly what arguments they take.
+    If your allocator needs a context pointer, you can set the `customAllocatorContext` field of the MsfGifState struct
+    before calling msf_gif_begin(), and it will be passed to all subsequent allocator macro calls.
+    The same goes for file I/O macros, using the `customOutputContext` field.
 
 See end of file for license information.
 */
 
-//version 1.0
+//version 1.1
 
 #ifndef MSF_GIF_H
 #define MSF_GIF_H
@@ -101,7 +115,7 @@ size_t msf_gif_end(MsfGifState * handle);
 #if defined(MSF_GIF_MALLOC) && defined(MSF_GIF_REALLOC) && defined(MSF_GIF_FREE)
 #elif !defined(MSF_GIF_MALLOC) && !defined(MSF_GIF_REALLOC) && !defined(MSF_GIF_FREE)
 #else
-#error "You must either define all of MSF_GIF_MALLOC, MSF_GIF_REALLOC, and MSF_GIF_FREE, or none of them"
+#error "You must either define all of MSF_GIF_MALLOC, MSF_GIF_REALLOC, and MSF_GIF_FREE, or define none of them"
 #endif
 
 //provide default allocator definitions that redirect to the standard global allocator
@@ -113,10 +127,10 @@ size_t msf_gif_end(MsfGifState * handle);
 #endif
 
 //ensure the library user has either defined all of fopen/fwrite/fclose, or none
-#if defined(MSF_GIF_FOPEN) && defined(MSF_GIF_FWRITE) && defined(MSF_GIF_FCLOSE) && defined(MSF_GIF_FTELL)
-#elif !defined(MSF_GIF_FOPEN) && !defined(MSF_GIF_FWRITE) && !defined(MSF_GIF_FCLOSE) && !defined(MSF_GIF_FTELL)
+#if defined(MSF_GIF_FOPEN) && defined(MSF_GIF_FWRITE) && defined(MSF_GIF_FCLOSE)
+#elif !defined(MSF_GIF_FOPEN) && !defined(MSF_GIF_FWRITE) && !defined(MSF_GIF_FCLOSE)
 #else
-#error "You must either define all of MSF_GIF_FOPEN, MSF_GIF_FWRITE, MSF_GIF_FCLOSE, and MSF_GIF_FTELL, or none of them"
+#error "You must either define all of MSF_GIF_FOPEN, MSF_GIF_FWRITE, and MSF_GIF_FCLOSE, or define none of them"
 #endif
 
 //provide default file ops that redirect to the standard library ones
@@ -125,7 +139,6 @@ size_t msf_gif_end(MsfGifState * handle);
 #define MSF_GIF_FOPEN(contextPointer, filePath) fopen(filePath, "wb")
 #define MSF_GIF_FWRITE(contextPointer, filePointer, data, dataSize) fwrite(data, dataSize, 1, (FILE *) filePointer)
 #define MSF_GIF_FCLOSE(contextPointer, filePointer) fclose((FILE *) filePointer)
-#define MSF_GIF_FTELL(contextPointer, filePointer) ftell((FILE *) filePointer)
 #endif
 
 //instrumentation for capturing profiling traces (useless for the library user, but useful for the library author)
@@ -141,14 +154,27 @@ size_t msf_gif_end(MsfGifState * handle);
 
 #include <string.h> //memcpy
 
-//TODO: provide a version of bit_log() for obscure compilers that might lack intrinsics?
 //TODO: use compiler-specific notation to force-inline functions currently marked inline
-#ifdef __GNUC__
+#if defined(__GNUC__) //gcc, clang
 static inline int msf_bit_log(int i) { return 32 - __builtin_clz(i); }
-#else //MSVC
+#elif defined(_MSC_VER) //msvc
 #include <intrin.h>
 static inline int msf_bit_log(int i) { unsigned long idx; _BitScanReverse(&idx, i); return idx + 1; }
-#endif //TODO: make a truly compiler-independent version of this
+#else //fallback implementation for other compilers
+//from https://stackoverflow.com/a/31718095/3064745 - thanks!
+static inline int msf_bit_log(int i) {
+    static const int MultiplyDeBruijnBitPosition[32] = {
+        0, 9, 1, 10, 13, 21, 2, 29, 11, 14, 16, 18, 22, 25, 3, 30,
+        8, 12, 20, 28, 15, 17, 24, 7, 19, 27, 23, 6, 26, 5, 4, 31,
+    };
+    i |= i >> 1;
+    i |= i >> 2;
+    i |= i >> 4;
+    i |= i >> 8;
+    i |= i >> 16;
+    return MultiplyDeBruijnBitPosition[(uint32_t)(i * 0x07C4ACDDU) >> 27] + 1;
+}
+#endif
 static inline int msf_imin(int a, int b) { return a < b? a : b; }
 static inline int msf_imax(int a, int b) { return b < a? a : b; }
 
@@ -477,7 +503,8 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int width, int height) { MsfTimeFunc
-    //TODO: convert this to UTF-16 to correctly handle unicode on windows!!!
+    //TODO: convert this to UTF-16 to correctly handle unicode on windows!?!?
+    //      (or just say "do it yourself" now that replacing fopen is a thing?)
     if (!(handle->fp = MSF_GIF_FOPEN(handle->customOutputContext, outputFilePath))) return 0;
     MsfCookedFrame empty = {0}; //god I hate MSVC...
     handle->previousFrame = empty;
@@ -501,10 +528,9 @@ size_t msf_gif_frame(MsfGifState * handle,
                      uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes)
 { MsfTimeFunc
     if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
-    //TODO: is this calculation even right!? doesn't it need to take into account the pitch!?!?
-    uint8_t * raw = pitchInBytes < 0? &pixelData[handle->width * 4 * (handle->height - 1)] : pixelData;
+    if (pitchInBytes < 0) pixelData -= pitchInBytes * (handle->height - 1);
     MsfCookedFrame frame = msf_cook_frame(handle->customAllocatorContext,
-        handle->width, handle->height, pitchInBytes, maxBitDepth, raw);
+        handle->width, handle->height, pitchInBytes, maxBitDepth, pixelData);
     if (!frame.pixels) { MSF_GIF_FCLOSE(handle->customOutputContext, handle->fp); return 0; }
     MsfFileBuffer buf = msf_compress_frame(handle->customAllocatorContext,
         handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame);

@@ -54,13 +54,6 @@ static int dummy_fclose(void * context, void * handle) {
 	return ret;
 }
 
-// static int dummy_ftell(void * context, void * handle) {
-// 	FILE * fp = *((FILE **) handle);
-// 	int ret = ftell(fp);
-// 	printf("FTELL context: %s, handle: %p, result: %d\n", context, handle, ret);
-// 	return ret;
-// }
-
 #define MSF_GIF_IMPL
 #define MSF_GIF_MALLOC(context, newSize) dummy_malloc(context, newSize)
 #define MSF_GIF_REALLOC(context, oldMemory, oldSize, newSize) dummy_realloc(context, oldMemory, oldSize, newSize)
@@ -68,5 +61,4 @@ static int dummy_fclose(void * context, void * handle) {
 #define MSF_GIF_FOPEN(context, filePath) dummy_fopen(context, filePath)
 #define MSF_GIF_FWRITE(context, filePointer, data, dataSize) dummy_fwrite(context, filePointer, data, dataSize)
 #define MSF_GIF_FCLOSE(context, filePointer) dummy_fclose(context, filePointer)
-#define MSF_GIF_FTELL(context, filePointer) dummy_ftell(context, filePointer)
 #include "../msf_gif.h"
