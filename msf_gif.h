@@ -179,50 +179,6 @@ static inline int msf_imin(int a, int b) { return a < b? a : b; }
 static inline int msf_imax(int a, int b) { return b < a? a : b; }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// MsfFileBuffer                                                                                                    ///
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-typedef struct {
-    uint8_t * block;
-    uint8_t * head;
-    uint8_t * end;
-} MsfFileBuffer;
-
-static int msf_fb_check(void * allocContext, MsfFileBuffer * buf, size_t bytes) {
-    if (buf->head + bytes < buf->end) return 1;
-
-    size_t byte = buf->head - buf->block;
-    size_t size = buf->end - buf->block;
-
-    //done in a loop so adding payloads larger than the current buffer size will work
-    while (byte + bytes >= size) {
-        size = size * 2 + 1;
-    }
-
-    void * moved = MSF_GIF_REALLOC(allocContext, buf->block, buf->end - buf->block, size);
-    if (!moved) { MSF_GIF_FREE(allocContext, buf->block, buf->end - buf->block); return 0; }
-    buf->block = (uint8_t *) moved;
-    buf->head = buf->block + byte;
-    buf->end = buf->block + size;
-    return 1;
-}
-
-static inline void msf_fb_write_data(MsfFileBuffer * buf, void * data, size_t bytes) {
-    memcpy(buf->head, data, bytes);
-    buf->head += bytes;
-}
-
-static inline void msf_fb_write_u8(MsfFileBuffer * buf, uint8_t data) {
-    *buf->head++ = data;
-}
-
-static MsfFileBuffer msf_create_file_buffer(void * allocContext, size_t bytes) {
-    uint8_t * block = (uint8_t *) MSF_GIF_MALLOC(allocContext, bytes);
-    MsfFileBuffer ret = { block, block, block + bytes };
-    return ret;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Frame Cooking                                                                                                    ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -323,38 +279,54 @@ static MsfCookedFrame msf_cook_frame(void * allocContext, int width, int height,
         }
     } while (count >= 256 && --depth);
 
+    printf("depth: %2d    count: %3d\n", depth, count);
+
     MsfCookedFrame ret = { cooked, used, depth, rdepths[depth], gdepths[depth], bdepths[depth] };
 	return ret;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// MsfFileBuffer                                                                                                    ///
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+typedef struct {
+    uint8_t * block;
+    uint8_t * head;
+    uint8_t * end;
+} MsfFileBuffer;
+
+static inline void msf_fb_write_data(MsfFileBuffer * buf, void * data, size_t bytes) {
+    memcpy(buf->head, data, bytes);
+    buf->head += bytes;
+}
+
+static MsfFileBuffer msf_create_file_buffer(void * allocContext, size_t bytes) {
+    uint8_t * block = (uint8_t *) MSF_GIF_MALLOC(allocContext, bytes);
+    MsfFileBuffer ret = { block, block, block + bytes };
+    return ret;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Frame Compression                                                                                                ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-typedef struct {
-    uint32_t bits;
-    uint16_t bytes[129];
-} MsfBlockBuffer;
-
-static inline int msf_put_code(void * allocContext,
-    MsfFileBuffer * buf, MsfBlockBuffer * block, int bits, uint32_t code)
-{
+static inline int msf_put_code(MsfFileBuffer * buf, uint32_t * blockBits, int len, uint32_t code) {
     //insert new code into block buffer
-    int idx = block->bits / 16;
-    int bit = block->bits % 16;
-    block->bytes[idx + 0] |= code <<       bit ;
-    block->bytes[idx + 1] |= code >> (16 - bit);
-    block->bits += bits;
+    int idx = *blockBits / 8;
+    int bit = *blockBits % 8;
+    buf->head[idx + 0] |= code <<       bit ;
+    buf->head[idx + 1] |= code >> ( 8 - bit);
+    buf->head[idx + 2] |= code >> (16 - bit);
+    *blockBits += len;
 
     //flush the block buffer if it's full
-    if (block->bits >= 255 * 8) {
-        if (!msf_fb_check(allocContext, buf, 256)) return 0;
-        msf_fb_write_u8(buf, 255);
-        msf_fb_write_data(buf, block->bytes, 255);
-
-        block->bits -= 255 * 8;
-        block->bytes[0] = block->bytes[127] >> 8 | block->bytes[128] << 8;
-        memset(block->bytes + 1, 0, 256);
+    if (*blockBits >= 256 * 8) {
+        *blockBits -= 255 * 8;
+        buf->head += 256;
+        buf->head[2] = buf->head[1];
+        buf->head[1] = buf->head[0];
+        buf->head[0] = 255;
+        memset(buf->head + 4, 0, 256);
     }
 
     return 1;
@@ -375,13 +347,15 @@ static inline void msf_lzw_reset(MsfStridedList * lzw, int tableSize, int stride
 static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int height, int centiSeconds,
                                         MsfCookedFrame frame, MsfCookedFrame previous)
 { MsfTimeFunc
-	MsfFileBuffer ret = {0};
+	MsfFileBuffer blank = {0};
 
-    MsfFileBuffer buf = msf_create_file_buffer(allocContext, 1024);
-    if (!buf.block) return ret;
+    //NOTE: we allocate enough memory for the worst case upfront because it's a reasonable amount
+    //      (about half the size of a CookedFrame), and prevents us from ever having to check size or realloc
+    MsfFileBuffer buf = msf_create_file_buffer(allocContext, 1024 + width * height * 2);
+    if (!buf.block) return blank;
     int lzwAllocSize = 4096 * 256 * sizeof(int16_t);
     MsfStridedList lzw = { (int16_t *) MSF_GIF_MALLOC(allocContext, lzwAllocSize) };
-    if (!lzw.data) { MSF_GIF_FREE(allocContext, buf.block, buf.end - buf.block); return ret; }
+    if (!lzw.data) { MSF_GIF_FREE(allocContext, buf.block, buf.end - buf.block); return blank; }
 
     //allocate tlb
     int totalBits = frame.rbits + frame.gbits + frame.bbits;
@@ -429,27 +403,26 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
     msf_fb_write_data(&buf, table, tableSize * sizeof(Color3));
 
     //image data
-    MsfBlockBuffer block = {0};
-    msf_fb_write_u8(&buf, tableBits);
+    *buf.head++ = tableBits;
     msf_lzw_reset(&lzw, tableSize, tableIdx);
+    //prep block
+    memset(buf.head, 0, 260);
+    buf.head[0] = 255;
+    uint32_t blockBits = 8; //relative to block.head
 
     uint8_t idxBuffer[4096];
     int idxLen = 0;
     int lastCode = hasSamePal && frame.pixels[0] == previous.pixels[0]? 0 : tlb[frame.pixels[0]];
     MsfTimeLoop("compress") for (int i = 1; i < width * height; ++i) {
-        //SLOW: the branchless version of this diff is faster for gifs with camera movement like keyhole,
-        //      and much slower for everything else. not sure if a best-of-both-worlds option exists?
+        //PERF: branching vs. branchless version of this line is observed to have no discernable impact on speed
         idxBuffer[idxLen++] = hasSamePal && frame.pixels[i] == previous.pixels[i]? 0 : tlb[frame.pixels[i]];
-        //SLOW: branchless version must use && otherwise it will segfault on frame 1, but it's well-predicted so OK
-        // idxBuffer[idxLen++] = (hasSamePal && frame.pixels[i] == previous.pixels[i]) * tlb[frame.pixels[i]];
+        //PERF: branchless version must use && otherwise it will segfault on frame 1, but it's well-predicted so OK
+        // idxBuffer[idxLen++] = (!(hasSamePal && frame.pixels[i] == previous.pixels[i])) * tlb[frame.pixels[i]];
         int code = (&lzw.data[lastCode * lzw.stride])[idxBuffer[idxLen - 1]];
         if (code < 0) {
             //write to code stream
             int codeBits = msf_bit_log(lzw.len - 1);
-            if (!msf_put_code(allocContext, &buf, &block, codeBits, lastCode)) {
-                MSF_GIF_FREE(allocContext, lzw.data, lzwAllocSize);
-                return ret;
-            }
+            msf_put_code(&buf, &blockBits, codeBits, lastCode);
 
             //NOTE: [I THINK] we need to leave room for 2 more codes (leftover and end code)
             //      because we don't ever reset the table after writing the leftover bits
@@ -457,10 +430,7 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
             //Q: why can't we just check when writing out those codes? too verbose? can't we factor to a funtion?
             if (lzw.len > 4094) {
                 //reset buffer code table
-                if (!msf_put_code(allocContext, &buf, &block, codeBits, tableSize)) {
-                    MSF_GIF_FREE(allocContext, lzw.data, lzwAllocSize);
-                    return ret;
-                }
+                msf_put_code(&buf, &blockBits, codeBits, tableSize);
                 msf_lzw_reset(&lzw, tableSize, tableIdx);
             } else {
                 (&lzw.data[lastCode * lzw.stride])[idxBuffer[idxLen - 1]] = lzw.len;
@@ -477,19 +447,17 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
 
     //write code for leftover index buffer contents, then the end code
     MSF_GIF_FREE(allocContext, lzw.data, lzwAllocSize);
-    if (!msf_put_code(allocContext, &buf, &block, msf_bit_log(lzw.len - 1), lastCode)) { return ret; }
-    if (!msf_put_code(allocContext, &buf, &block, msf_bit_log(lzw.len), tableSize + 1)) { return ret; }
+    msf_put_code(&buf, &blockBits, msf_bit_log(lzw.len - 1), lastCode);
+    msf_put_code(&buf, &blockBits, msf_bit_log(lzw.len), tableSize + 1);
 
     //flush remaining data
-    if (block.bits) {
-        int bytes = (block.bits + 7) / 8; //round up
-        if (!msf_fb_check(allocContext, &buf, bytes + 1)) return ret;
-        msf_fb_write_u8(&buf, bytes);
-        msf_fb_write_data(&buf, block.bytes, bytes);
+    if (blockBits > 8) {
+        int bytes = (blockBits + 7) / 8; //round up
+        buf.head[0] = bytes - 1;
+        buf.head += bytes;
     }
 
-    if (!msf_fb_check(allocContext, &buf, 1)) return ret;
-    msf_fb_write_u8(&buf, 0); //terminating block
+    *buf.head++ = 0; //terminating block
 
     return buf;
 }
