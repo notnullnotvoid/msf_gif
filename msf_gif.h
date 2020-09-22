@@ -275,8 +275,6 @@ static MsfCookedFrame msf_cook_frame(void * allocContext, int width, int height,
         }
     } while (count >= 256 && --depth);
 
-    printf("depth: %2d    count: %3d\n", depth, count);
-
     MsfCookedFrame ret = { cooked, used, depth, count, rdepths[depth], gdepths[depth], bdepths[depth] };
 	return ret;
 }
@@ -489,7 +487,7 @@ size_t msf_gif_frame(MsfGifState * handle,
     if (pitchInBytes < 0) pixelData -= pitchInBytes * (handle->height - 1);
     MsfCookedFrame frame = msf_cook_frame(handle->customAllocatorContext, handle->width, handle->height, pitchInBytes,
         // msf_imin(maxBitDepth, handle->previousFrame.depth + 1), pixelData);
-        msf_imin(maxBitDepth, handle->previousFrame.depth + 180 / msf_imax(1, handle->previousFrame.count)), pixelData);
+        msf_imin(maxBitDepth, handle->previousFrame.depth + 160 / msf_imax(1, handle->previousFrame.count)), pixelData);
     if (!frame.pixels) { MSF_GIF_FCLOSE(handle->customOutputContext, handle->fp); return 0; }
     MsfFileBuffer buf = msf_compress_frame(handle->customAllocatorContext,
         handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame);
