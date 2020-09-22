@@ -4,10 +4,3 @@
 #include "trace.hpp"
 #endif
 #include "../msf_gif.h"
-
-extern "C" {
-    int totalReallocCalls;
-    int totalReallocCopies;
-    int totalReallocData;
-    int totalReallocBytesCopied;
-}

@@ -57,7 +57,7 @@ int main() {
             // handle.customAllocatorContext = dsprintf(nullptr, "%s frame %d", path, j);
             int pitch = flipped? -blob->width * 4 : blob->width * 4;
             msf_gif_frame(&handle,
-                (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 15, pitch);
+                (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 16, pitch);
         }
         handle.customAllocatorContext = path;
         size_t out = msf_gif_end(&handle);

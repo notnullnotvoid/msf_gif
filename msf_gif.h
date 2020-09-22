@@ -11,7 +11,7 @@ HOW TO USE:
 
 USAGE EXAMPLE:
 
-    int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 15;
+    int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
     MsfGifState gifState = {};
     msf_gif_begin(&gifState, "example.gif", width, height);
     msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 1
@@ -78,7 +78,7 @@ size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int widt
  * @param maxBitDepth          Limits how many bits per pixel can be used when quantizing the gif.
  *                             The actual bit depth chosen for a given frame will be less than or equal to
  *                             the supplied maximum, depending on the variety of colors used in the frame.
- *                             `maxBitDepth` will be clamped between 3 and 15. The recommended default is 15.
+ *                             `maxBitDepth` will be clamped between 1 and 16. The recommended default is 16.
  *                             Lowering this value can result in faster exports and smaller gifs,
  *                             but the quality may suffer.
  *                             Please experiment with this value to find what works best for your application.
@@ -182,16 +182,16 @@ static inline int msf_imax(int a, int b) { return b < a? a : b; }
 #include <emmintrin.h>
 #endif
 
-static const int msfUsedAllocSize = (1 << 15) * sizeof(uint8_t);
+static const int msfUsedAllocSize = (1 << 16) * sizeof(uint8_t);
 
 static MsfCookedFrame msf_cook_frame(void * allocContext, int width, int height, int pitch, int depth, uint8_t * raw)
 { MsfTimeFunc
 	MsfCookedFrame blank = {0};
 
     //bit depth for each channel
-    const static int rdepths[16] = { 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5 };
-    const static int gdepths[16] = { 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5 };
-    const static int bdepths[16] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5 };
+    const static int rdepths[17] = { 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5 };
+    const static int gdepths[17] = { 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6 };
+    const static int bdepths[17] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5 };
 
     const static int ditherKernel[16] = {
          0 << 12,  8 << 12,  2 << 12, 10 << 12,
@@ -275,6 +275,8 @@ static MsfCookedFrame msf_cook_frame(void * allocContext, int width, int height,
         }
     } while (count >= 256 && --depth);
 
+    printf("depth: %2d    count: %3d\n", depth, count);
+
     MsfCookedFrame ret = { cooked, used, depth, count, rdepths[depth], gdepths[depth], bdepths[depth] };
 	return ret;
 }
@@ -354,7 +356,7 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
     //allocate tlb
     int totalBits = frame.rbits + frame.gbits + frame.bbits;
     int tlbSize = 1 << totalBits;
-    uint8_t tlb[1 << 15]; //only 32k, so stack allocating is fine
+    uint8_t tlb[1 << 16]; //only 64k, so stack allocating is fine
 
     //generate palette
     typedef struct { uint8_t r, g, b; } Color3;
@@ -482,7 +484,7 @@ size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int widt
 size_t msf_gif_frame(MsfGifState * handle,
                      uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes)
 { MsfTimeFunc
-    maxBitDepth = msf_imax(1, msf_imin(15, maxBitDepth));
+    maxBitDepth = msf_imax(1, msf_imin(16, maxBitDepth));
     if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
     if (pitchInBytes < 0) pixelData -= pitchInBytes * (handle->height - 1);
     MsfCookedFrame frame = msf_cook_frame(handle->customAllocatorContext, handle->width, handle->height, pitchInBytes,
