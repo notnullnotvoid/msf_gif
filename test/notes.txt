@@ -6,13 +6,6 @@ RC TODOs:
 
 
 
-- POSSIBLE OPTIMIZATION: if there are fewer pixels left in the frame than codes available in the lzw table, can we memset less of it?
-	- how often will this happen, and how much will we save on average?
-	- NOTE: the boundary is actually probably more like 2x the lzw table size, as after ever unique color has been seen by the encoder, it will take at least 2 pixels to create a new table entry
-- TODO: measure how many times the lzw resets per frame - if it's low, this could be a promising optimization
-
-
-
 - async/multithreaded API
 - runtime option for channel importance order?
 - increase maximum bit depth to 16?

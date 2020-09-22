@@ -65,12 +65,6 @@ int main() {
     }
 
     printf("\n");
-    printf("totalReallocCalls: %d\n", totalReallocCalls);
-    printf("totalReallocCopies: %d\n", totalReallocCopies);
-    printf("totalReallocData: %d\n", totalReallocData);
-    printf("totalReallocBytesCopied: %d\n", totalReallocBytesCopied);
-
-    printf("\n");
     TimerInfo totals = {};
     for (int i = 0; i < timers.len; ++i) {
         totals.time += timers[i].time;

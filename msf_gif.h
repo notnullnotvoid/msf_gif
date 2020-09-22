@@ -23,12 +23,12 @@ Detailed function documentation can be found in the header section below.
 
 REPLACING MALLOC AND FWRITE:
 
-    This library uses malloc+realloc+free internally for memory allocation and fopen+fwrite+fclose for file output.
+    This library uses malloc+free internally for memory allocation and fopen+fwrite+fclose for file output.
     To facilitate custom memory management and I/O, these calls go through macros, which can be redefined.
-    These macros provide additional information (such as previous allocation size when calling realloc and free),
+    These macros provide additional information (such as previous allocation size when calling free),
     as well as a context pointer, in order to be usable with a wider range of allocators.
     In order to replace them, simply #define the relevant macros in the same place where you #define MSF_GIF_IMPL.
-    The allocator macros are MSF_GIF_MALLOC, MSF_GIF_REALLOC, and MSF_GIF_FREE.
+    The allocator macros are MSF_GIF_MALLOC, and MSF_GIF_FREE.
     The file output macros are MSF_GIF_FOPEN, MSF_GIF_FWRITE, and MSF_GIF_FCLOSE.
     Search for their default definitions below to see the exactly what arguments they take.
     If your allocator needs a context pointer, you can set the `customAllocatorContext` field of the MsfGifState struct
@@ -111,18 +111,17 @@ size_t msf_gif_end(MsfGifState * handle);
 #ifndef MSF_GIF_ALREADY_IMPLEMENTED_IN_THIS_TRANSLATION_UNIT
 #define MSF_GIF_ALREADY_IMPLEMENTED_IN_THIS_TRANSLATION_UNIT
 
-//ensure the library user has either defined all of malloc/realloc/free, or none
-#if defined(MSF_GIF_MALLOC) && defined(MSF_GIF_REALLOC) && defined(MSF_GIF_FREE)
-#elif !defined(MSF_GIF_MALLOC) && !defined(MSF_GIF_REALLOC) && !defined(MSF_GIF_FREE)
+//ensure the library user has either defined both of malloc/free, or neither
+#if defined(MSF_GIF_MALLOC) && defined(MSF_GIF_FREE)
+#elif !defined(MSF_GIF_MALLOC) && !defined(MSF_GIF_FREE)
 #else
-#error "You must either define all of MSF_GIF_MALLOC, MSF_GIF_REALLOC, and MSF_GIF_FREE, or define none of them"
+#error "You must either define both MSF_GIF_MALLOC and MSF_GIF_FREE, or define neither of them"
 #endif
 
 //provide default allocator definitions that redirect to the standard global allocator
 #if !defined(MSF_GIF_MALLOC)
 #include <stdlib.h> //malloc, etc.
 #define MSF_GIF_MALLOC(contextPointer, newSize) malloc(newSize)
-#define MSF_GIF_REALLOC(contextPointer, oldMemory, oldSize, newSize) realloc(oldMemory, newSize)
 #define MSF_GIF_FREE(contextPointer, oldMemory, oldSize) free(oldMemory)
 #endif
 
@@ -278,8 +277,6 @@ static MsfCookedFrame msf_cook_frame(void * allocContext, int width, int height,
             count += used[j];
         }
     } while (count >= 256 && --depth);
-
-    printf("depth: %2d    count: %3d\n", depth, count);
 
     MsfCookedFrame ret = { cooked, used, depth, rdepths[depth], gdepths[depth], bdepths[depth] };
 	return ret;
@@ -492,7 +489,7 @@ size_t msf_gif_begin(MsfGifState * handle, const char * outputFilePath, int widt
 size_t msf_gif_frame(MsfGifState * handle,
                      uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes)
 { MsfTimeFunc
-    maxBitDepth = msf_imin(15, maxBitDepth);
+    maxBitDepth = msf_imax(1, msf_imin(15, maxBitDepth));
     if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
     if (pitchInBytes < 0) pixelData -= pitchInBytes * (handle->height - 1);
     MsfCookedFrame frame = msf_cook_frame(handle->customAllocatorContext,
