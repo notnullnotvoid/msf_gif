@@ -29,7 +29,7 @@ Everywhere else, just include the header like normal.
 ### Usage example
 
 ```cpp
-int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 15;
+int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
 MsfGifState gifState = {};
 msf_gif_begin(&gifState, "example.gif", width, height);
 msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 1
