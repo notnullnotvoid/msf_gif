@@ -407,15 +407,13 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
     buf.head[0] = 255;
     uint32_t blockBits = 8; //relative to block.head
 
-    uint8_t idxBuffer[4096];
-    int idxLen = 0;
     int lastCode = hasSamePal && frame.pixels[0] == previous.pixels[0]? 0 : tlb[frame.pixels[0]];
     MsfTimeLoop("compress") for (int i = 1; i < width * height; ++i) {
         //PERF: branching vs. branchless version of this line is observed to have no discernable impact on speed
-        idxBuffer[idxLen++] = hasSamePal && frame.pixels[i] == previous.pixels[i]? 0 : tlb[frame.pixels[i]];
+        int color = hasSamePal && frame.pixels[i] == previous.pixels[i]? 0 : tlb[frame.pixels[i]];
         //PERF: branchless version must use && otherwise it will segfault on frame 1, but it's well-predicted so OK
-        // idxBuffer[idxLen++] = (!(hasSamePal && frame.pixels[i] == previous.pixels[i])) * tlb[frame.pixels[i]];
-        int code = (&lzw.data[lastCode * lzw.stride])[idxBuffer[idxLen - 1]];
+        // int color = (!(hasSamePal && frame.pixels[i] == previous.pixels[i])) * tlb[frame.pixels[i]];
+        int code = (&lzw.data[lastCode * lzw.stride])[color];
         if (code < 0) {
             //write to code stream
             int codeBits = msf_bit_log(lzw.len - 1);
@@ -430,13 +428,11 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
                 msf_put_code(&buf, &blockBits, codeBits, tableSize);
                 msf_lzw_reset(&lzw, tableSize, tableIdx);
             } else {
-                (&lzw.data[lastCode * lzw.stride])[idxBuffer[idxLen - 1]] = lzw.len;
+                (&lzw.data[lastCode * lzw.stride])[color] = lzw.len;
                 ++lzw.len;
             }
 
-            //reset index buffer
-            lastCode = idxBuffer[0] = idxBuffer[idxLen - 1];
-            idxLen = 1;
+            lastCode = color;
         } else {
             lastCode = code;
         }
