@@ -181,10 +181,7 @@ static inline int msf_imax(int a, int b) { return b < a? a : b; }
 /// Frame Cooking                                                                                                    ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#define MSF_GIF_USE_AVX2_IF_AVAILABLE
-#if defined (__AVX2__) && defined(MSF_GIF_USE_AVX2_IF_AVAILABLE)
-#include <immintrin.h>
-#elif (defined (__SSE2__) || defined (_M_X64) || _M_IX86_FP == 2) && !defined(MSF_GIF_NO_SSE2)
+#if (defined (__SSE2__) || defined (_M_X64) || _M_IX86_FP == 2) && !defined(MSF_GIF_NO_SSE2)
 #include <emmintrin.h>
 #endif
 
@@ -231,34 +228,7 @@ static MsfCookedFrame msf_cook_frame(void * allocContext, int width, int height,
         MsfTimeLoop("cook") for (int y = 0; y < height; ++y) {
             int x = 0;
 
-            #if defined (__AVX2__) && defined (MSF_GIF_USE_AVX2_IF_AVAILABLE)
-                const int * kp = &ditherKernel[(y & 3) * 4];
-                int ki[8] = { kp[0], kp[1], kp[2], kp[3], kp[0], kp[1], kp[2], kp[3] };
-                __m256i k = _mm256_loadu_si256((__m256i *) &ki);
-                __m256i k2 = _mm256_or_si256(_mm256_srli_epi32(k, rbits), _mm256_slli_epi32(_mm256_srli_epi32(k, bbits), 16));
-                // MsfTimeLoop("AVX2")
-                for (; x < width - 3; x += 8) {
-                    uint8_t * pixels = &raw[y * pitch + x * 4];
-                    __m256i p = _mm256_loadu_si256((__m256i *) pixels);
-
-                    __m256i rb = _mm256_and_si256(p, _mm256_set1_epi32(0x00FF00FF));
-                    __m256i rb1 = _mm256_mullo_epi16(rb, _mm256_set_epi16(bmul, rmul, bmul, rmul, bmul, rmul, bmul, rmul,
-                                                                          bmul, rmul, bmul, rmul, bmul, rmul, bmul, rmul));
-                    __m256i rb2 = _mm256_adds_epu16(rb1, k2);
-                    __m256i r3 = _mm256_srli_epi32(_mm256_and_si256(rb2, _mm256_set1_epi32(0x0000FFFF)), 16 - rbits);
-                    __m256i b3 = _mm256_and_si256(_mm256_srli_epi32(rb2, 32 - rbits - gbits - bbits), _mm256_set1_epi32(bmask));
-
-                    __m256i g = _mm256_and_si256(_mm256_srli_epi32(p, 8), _mm256_set1_epi32(0x000000FF));
-                    __m256i g1 = _mm256_mullo_epi16(g, _mm256_set1_epi32(gmul));
-                    __m256i g2 = _mm256_adds_epu16(g1, _mm256_srli_epi32(k, gbits));
-                    __m256i g3 = _mm256_and_si256(_mm256_srli_epi32(g2, 16 - rbits - gbits), _mm256_set1_epi32(gmask));
-
-                    //TODO: does storing this as a __m256i then reading it back as a uint32_t violate strict aliasing?
-                    uint32_t * c = &cooked[y * width + x];
-                    __m256i out = _mm256_or_si256(_mm256_or_si256(r3, g3), b3);
-                    _mm256_storeu_si256((__m256i *) c, out);
-                }
-            #elif (defined (__SSE2__) || defined (_M_X64) || _M_IX86_FP == 2) && !defined(MSF_GIF_NO_SSE2)
+            #if (defined (__SSE2__) || defined (_M_X64) || _M_IX86_FP == 2) && !defined(MSF_GIF_NO_SSE2)
                 __m128i k = _mm_loadu_si128((__m128i *) &ditherKernel[(y & 3) * 4]);
                 __m128i k2 = _mm_or_si128(_mm_srli_epi32(k, rbits), _mm_slli_epi32(_mm_srli_epi32(k, bbits), 16));
                 // MsfTimeLoop("SIMD")
