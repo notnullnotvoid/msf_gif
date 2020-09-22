@@ -38,7 +38,7 @@ REPLACING MALLOC AND FWRITE:
 See end of file for license information.
 */
 
-//version 1.1
+//version 1.2
 
 #ifndef MSF_GIF_H
 #define MSF_GIF_H
@@ -49,7 +49,7 @@ See end of file for license information.
 typedef struct {
     uint32_t * pixels;
     uint8_t * used;
-    int depth, rbits, gbits, bbits;
+    int depth, count, rbits, gbits, bbits;
 } MsfCookedFrame;
 
 typedef struct {
@@ -278,7 +278,7 @@ static MsfCookedFrame msf_cook_frame(void * allocContext, int width, int height,
         }
     } while (count >= 256 && --depth);
 
-    MsfCookedFrame ret = { cooked, used, depth, rdepths[depth], gdepths[depth], bdepths[depth] };
+    MsfCookedFrame ret = { cooked, used, depth, count, rdepths[depth], gdepths[depth], bdepths[depth] };
 	return ret;
 }
 
@@ -311,10 +311,6 @@ static inline int msf_put_code(MsfFileBuffer * buf, uint32_t * blockBits, int le
     //insert new code into block buffer
     int idx = *blockBits / 8;
     int bit = *blockBits % 8;
-    //PERF: this hack is MARGINALLY faster than doing it bytewise on modern x86, but might be WAY slower on ARM,
-    //      because it involves a potentially unaligned load... I also don't know if it violates strict aliasing
-    // uint32_t * dword = (uint32_t *) &buf->head[idx];
-    // *dword |= code << bit;
     buf->head[idx + 0] |= code <<       bit ;
     buf->head[idx + 1] |= code >> ( 8 - bit);
     buf->head[idx + 2] |= code >> (16 - bit);
@@ -492,8 +488,9 @@ size_t msf_gif_frame(MsfGifState * handle,
     maxBitDepth = msf_imax(1, msf_imin(15, maxBitDepth));
     if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
     if (pitchInBytes < 0) pixelData -= pitchInBytes * (handle->height - 1);
-    MsfCookedFrame frame = msf_cook_frame(handle->customAllocatorContext,
-        handle->width, handle->height, pitchInBytes, msf_imin(maxBitDepth, handle->previousFrame.depth + 1), pixelData);
+    MsfCookedFrame frame = msf_cook_frame(handle->customAllocatorContext, handle->width, handle->height, pitchInBytes,
+        // msf_imin(maxBitDepth, handle->previousFrame.depth + 1), pixelData);
+        msf_imin(maxBitDepth, handle->previousFrame.depth + 180 / msf_imax(1, handle->previousFrame.count)), pixelData);
     if (!frame.pixels) { MSF_GIF_FCLOSE(handle->customOutputContext, handle->fp); return 0; }
     MsfFileBuffer buf = msf_compress_frame(handle->customAllocatorContext,
         handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame);
