@@ -32,9 +32,9 @@ Everywhere else, just include the header like normal.
 int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 15;
 MsfGifState gifState = {};
 msf_gif_begin(&gifState, "example.gif", width, height);
-msf_gif_frame(&gifState, ..., bitDepth, centisecondsPerFrame, width * 4, false); //frame 1
-msf_gif_frame(&gifState, ..., bitDepth, centisecondsPerFrame, width * 4, false); //frame 2
-msf_gif_frame(&gifState, ..., bitDepth, centisecondsPerFrame, width * 4, false); //frame 3, etc...
+msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 1
+msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 2
+msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 3, etc...
 msf_gif_end(&gifState);
 ```
 Detailed function documentation can be found in the header.
