@@ -25,11 +25,8 @@ REPLACING MALLOC AND FWRITE:
 
     This library uses malloc+free internally for memory allocation and fopen+fwrite+fclose for file output.
     To facilitate custom memory management and I/O, these calls go through macros, which can be redefined.
-    These macros provide additional information (such as previous allocation size when calling free),
-    as well as a context pointer, in order to be usable with a wider range of allocators.
     In order to replace them, simply #define the relevant macros in the same place where you #define MSF_GIF_IMPL.
-    The allocator macros are MSF_GIF_MALLOC, and MSF_GIF_FREE.
-    The file output macros are MSF_GIF_FOPEN, MSF_GIF_FWRITE, and MSF_GIF_FCLOSE.
+    The macros are:   MSF_GIF_MALLOC, MSF_GIF_FREE,   MSF_GIF_FOPEN, MSF_GIF_FWRITE, MSF_GIF_FCLOSE.
     Search for their default definitions below to see the exactly what arguments they take.
     If your allocator needs a context pointer, you can set the `customAllocatorContext` field of the MsfGifState struct
     before calling msf_gif_begin(), and it will be passed to all subsequent allocator macro calls.
