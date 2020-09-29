@@ -1,4 +1,12 @@
 
+2.0 TODOs:
+- tighten up memory usage (free earlier, allocate less)
+- consult spec to be less conservative with trailing codes during compression
+- make writing to memory the default (only?) API behavior?
+- async API?? (by default????)
+- NEON SIMD???
+- allow writing with a specific palette????
+
 RC TODOs:
 - document memory usage?
 - remove error handling of memory allocation failure because I've decided that's stupid
@@ -8,34 +16,8 @@ RC TODOs:
 
 - async/multithreaded API
 - runtime option for channel importance order?
-- increase maximum bit depth to 16?
-	- requires re-auditing bake code to make sure this won't cause problems
-- bitfield for `used` array????
-- figure out if we can be less conservative with the trailing codes?
-
 - allow resetting thread id for more readable output from trace.cpp?
 - trace.cpp cumulative time reporting tools
-
-
-
-documentation:
-	- in file
-	- in repository/readme
-	- things to cover:
-		- use case for this library
-			- things this library specifically doesn't do
-				- exact colors, fancy GIF features
-				- image resizing (use stb_image_resize if you need this)
-			- things it doesn't do *yet*, but can be supported upon request
-				- support for custom allocators
-				- support for writing to a memory block instead of a file
-				- async API
-				- support for other pixel formats (can provide optimized conversion functions for common ones that arise)
-		- how much memory the library will allocate
-		- API, parameter-by-parameter
-		- compile-time options
-	- example code for opengl app (pull from escher)
-
 
 
 

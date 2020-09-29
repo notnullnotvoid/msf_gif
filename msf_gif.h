@@ -21,6 +21,7 @@ USAGE EXAMPLE:
 
 Detailed function documentation can be found in the header section below.
 
+
 REPLACING MALLOC AND FWRITE:
 
     This library uses malloc+free internally for memory allocation and fopen+fwrite+fclose for file output.

@@ -3,17 +3,27 @@
 #include "List.hpp"
 #include "common.hpp"
 
+struct FileBuffer {
+    uint8_t * mem;
+    size_t len;
+    size_t max;
+};
+
+bool write_entire_file(const char * filepath, const void * data, size_t bytes) {
+    assert(filepath && data);
+    FILE * f = fopen(filepath, "wb");
+    if (!f) return false;
+    if (!fwrite(data, bytes, 1, f)) return false;
+    if (fclose(f)) return false;
+    return true;
+}
+
+
+
 struct RawBlob {
     int width, height, frames, centiSeconds;
     int pixels[1];
 };
-
-extern "C" {
-    extern int totalReallocCalls;
-    extern int totalReallocCopies;
-    extern int totalReallocData;
-    extern int totalReallocBytesCopied;
-}
 
 int main() {
     const char * names[] = {
@@ -52,6 +62,10 @@ int main() {
         MsfGifState handle = {};
         handle.customAllocatorContext = path;
         handle.customOutputContext = path;
+        #ifdef MSF_CPP
+            FileBuffer gifBuf = { (uint8_t *) malloc(1024), 0, 1024 };
+            handle.customOutputContext = &gifBuf;
+        #endif
         msf_gif_begin(&handle, path, blob->width, blob->height);
         for (int j = 0; j < blob->frames; ++j) {
             // handle.customAllocatorContext = dsprintf(nullptr, "%s frame %d", path, j);
@@ -59,7 +73,9 @@ int main() {
             msf_gif_frame(&handle,
                 (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 16, pitch);
         }
-        handle.customAllocatorContext = path;
+        #ifdef MSF_CPP
+            assert(write_entire_file(path, gifBuf.mem, gifBuf.len));
+        #endif
         size_t out = msf_gif_end(&handle);
         timers.add({ get_time() - pre, (size_t)(blob->frames * blob->width * blob->height * 4), out });
     }
