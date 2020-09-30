@@ -12,13 +12,53 @@ HOW TO USE:
 USAGE EXAMPLE:
 
     int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
-    FILE * fp = fopen("MyGif.gif", "wb");
     MsfGifState gifState = {};
     msf_gif_begin(&gifState, "example.gif", width, height);
     msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 1
     msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 2
     msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 3, etc...
     msf_gif_end(&gifState);
+
+    int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
+    FILE * fp = fopen("MyGif.gif", "wb");
+    MsfGifState gifState = {};
+    MsfGifReturn mem = msf_gif_begin(&gifState, width, height);
+    fwrite(mem.data, mem.dataSize, 1, fp);
+    free(mem.data);
+    for (uint8_t * frame : frames) {
+        mem = msf_gif_frame(&gifState, frame, centisecondsPerFrame, bitDepth, width * 4);
+        fwrite(mem.data, mem.dataSize, 1, fp);
+        free(mem.data);
+    }
+    mem = msf_gif_end(&gifState);
+    fwrite(mem.data, mem.dataSize, 1, fp);
+    free(mem.data);
+    fclose(fp);
+
+    int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
+    FILE * fp = fopen("MyGif.gif", "wb");
+    MsfGifState gifState = {};
+    MsfGifReturn mem = msf_gif_begin(&gifState, width, height);
+    fwrite(mem.data, mem.dataSize, 1, fp);
+    for (uint8_t * frame : frames) {
+        mem = msf_gif_frame(&gifState, frame, centisecondsPerFrame, bitDepth, width * 4);
+        fwrite(mem.data, mem.dataSize, 1, fp);
+    }
+    mem = msf_gif_end(&gifState);
+    fwrite(mem.data, mem.dataSize, 1, fp);
+    fclose(fp);
+
+    int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
+    MsfGifState gifState = {};
+    msf_gif_begin(&gifState, width, height);
+    msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 1
+    msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 2
+    msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 3, etc...
+    MsfGifResult result = msf_gif_end(&gifState);
+    FILE * fp = fopen("MyGif.gif", "wb");
+    fwrite(result.data, result.dataSize, 1, fp);
+    fclose(fp);
+    free(result.data);
 
 Detailed function documentation can be found in the header section below.
 
@@ -67,10 +107,9 @@ extern "C" {
 #endif //__cplusplus
 
 /**
- * @param outputFilePath       Relative path to the output file, as a null-terminated string of UTF-8 bytes.
  * @param width                Image width in pixels - must be the same for the whole gif.
  * @param height               Image height in pixels - must be the same for the whole gif.
- * @return                     The size of the file written so far, or 0 on error.
+ * @return                     A block of memory containing the gif file header. You are responsible for freeing this.
  */
 MsfGifReturn msf_gif_begin(MsfGifState * handle, int width, int height);
 
@@ -88,13 +127,13 @@ MsfGifReturn msf_gif_begin(MsfGifState * handle, int width, int height);
  *                             Please experiment with this value to find what works best for your application.
  * @param pitchInBytes         The number of bytes from the beginning of one row of pixels to the beginning of the next.
  *                             If you want to flip the image, just pass in a negative pitch.
- * @return                     The size of the file written so far, or 0 on error.
+ * @return                     A block of memory containing the encoded frame. You are responsible for freeing this.
  */
 MsfGifReturn msf_gif_frame(MsfGifState * handle,
                      uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes);
 
 /**
- * @return                     The size of the written file in bytes, or 0 on error.
+ * @return                     A block of memory containing the gif file footer. You are responsible for freeing this.
  */
 MsfGifReturn msf_gif_end(MsfGifState * handle);
 
