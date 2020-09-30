@@ -3,12 +3,6 @@
 #include "List.hpp"
 #include "common.hpp"
 
-struct FileBuffer {
-    uint8_t * mem;
-    size_t len;
-    size_t max;
-};
-
 bool write_entire_file(const char * filepath, const void * data, size_t bytes) {
     assert(filepath && data);
     FILE * f = fopen(filepath, "wb");
@@ -61,22 +55,21 @@ int main() {
         double pre = get_time();
         MsfGifState handle = {};
         handle.customAllocatorContext = path;
-        handle.customOutputContext = path;
-        #ifdef MSF_CPP
-            FileBuffer gifBuf = { (uint8_t *) malloc(1024), 0, 1024 };
-            handle.customOutputContext = &gifBuf;
-        #endif
-        msf_gif_begin(&handle, path, blob->width, blob->height);
+        FILE * fp = fopen(path, "wb");
+        assert(fp);
+        MsfGifReturn begin = msf_gif_begin(&handle, blob->width, blob->height);
+        assert(fwrite(begin.data, begin.dataSize, 1, fp)); free(begin.data);
         for (int j = 0; j < blob->frames; ++j) {
             // handle.customAllocatorContext = dsprintf(nullptr, "%s frame %d", path, j);
             int pitch = flipped? -blob->width * 4 : blob->width * 4;
-            msf_gif_frame(&handle,
+            MsfGifReturn frame = msf_gif_frame(&handle,
                 (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 16, pitch);
+            assert(fwrite(frame.data, frame.dataSize, 1, fp)); free(frame.data);
         }
-        #ifdef MSF_CPP
-            assert(write_entire_file(path, gifBuf.mem, gifBuf.len));
-        #endif
-        size_t out = msf_gif_end(&handle);
+        MsfGifReturn end = msf_gif_end(&handle);
+        assert(fwrite(end.data, end.dataSize, 1, fp)); free(end.data);
+        size_t out = ftell(fp);
+        fclose(fp);
         timers.add({ get_time() - pre, (size_t)(blob->frames * blob->width * blob->height * 4), out });
     }
 

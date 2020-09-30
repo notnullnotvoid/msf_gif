@@ -1,6 +1,5 @@
 
 2.0 TODOs:
-- make writing to memory the default (only?) API behavior?
 - async API?? (by default????)
 - NEON SIMD???
 - allow writing with a specific palette????
