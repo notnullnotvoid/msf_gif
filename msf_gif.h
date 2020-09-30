@@ -46,7 +46,6 @@ See end of file for license information.
 
 typedef struct {
     uint32_t * pixels;
-    uint8_t * used;
     int depth, count, rbits, gbits, bbits;
 } MsfCookedFrame;
 
@@ -183,9 +182,8 @@ static inline int msf_imax(int a, int b) { return b < a? a : b; }
 #include <emmintrin.h>
 #endif
 
-static const int msfUsedAllocSize = (1 << 16) * sizeof(uint8_t);
-
-static MsfCookedFrame msf_cook_frame(void * allocContext, int width, int height, int pitch, int depth, uint8_t * raw)
+static MsfCookedFrame msf_cook_frame(void * allocContext, uint8_t * raw, uint8_t * used,
+                                     int width, int height, int pitch, int depth)
 { MsfTimeFunc
 	MsfCookedFrame blank = {0};
 
@@ -201,10 +199,8 @@ static MsfCookedFrame msf_cook_frame(void * allocContext, int width, int height,
         15 << 12,  7 << 12, 13 << 12,  5 << 12,
     };
 
-    uint8_t * used = (uint8_t *) MSF_GIF_MALLOC(allocContext, msfUsedAllocSize);
-    if (!used) return blank;
     uint32_t * cooked = (uint32_t *) MSF_GIF_MALLOC(allocContext, width * height * sizeof(uint32_t));
-    if (!cooked) { MSF_GIF_FREE(allocContext, used, msfUsedAllocSize); return blank; }
+    if (!cooked) { return blank; }
 
     int count = 0;
     MsfTimeLoop("do") do {
@@ -276,7 +272,7 @@ static MsfCookedFrame msf_cook_frame(void * allocContext, int width, int height,
         }
     } while (count >= 256 && --depth);
 
-    MsfCookedFrame ret = { cooked, used, depth, count, rdepths[depth], gdepths[depth], bdepths[depth] };
+    MsfCookedFrame ret = { cooked, depth, count, rdepths[depth], gdepths[depth], bdepths[depth] };
 	return ret;
 }
 
@@ -340,12 +336,12 @@ static inline void msf_lzw_reset(MsfStridedList * lzw, int tableSize, int stride
 }
 
 static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int height, int centiSeconds,
-                                        MsfCookedFrame frame, MsfCookedFrame previous)
+                                        MsfCookedFrame frame, MsfCookedFrame previous, uint8_t * used)
 { MsfTimeFunc
 	MsfFileBuffer blank = {0};
 
     //NOTE: we allocate enough memory for the worst case upfront because it's a reasonable amount
-    //      (about 3/2 the size of a CookedFrame), and prevents us from ever having to check size or realloc
+    //      (about 3/8 the size of a CookedFrame), and prevents us from ever having to check size or realloc
     int maxBufSize = 24 + 256 * 3 + width * height * 3 / 2;
     MsfFileBuffer buf = msf_create_file_buffer(allocContext, maxBufSize);
     if (!buf.block) return blank;
@@ -363,7 +359,7 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
     Color3 table[256] = { {0} };
     int tableIdx = 1; //we start counting at 1 because 0 is the transparent color
     MsfTimeLoop("table") for (int i = 0; i < tlbSize; ++i) {
-        if (frame.used[i]) {
+        if (used[i]) {
             tlb[i] = tableIdx;
             int rmask = (1 << frame.rbits) - 1;
             int gmask = (1 << frame.gbits) - 1;
@@ -381,7 +377,6 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
             ++tableIdx;
         }
     }
-    MSF_GIF_FREE(allocContext, frame.used, msfUsedAllocSize);
 
     //SPEC: "Because of some algorithmic constraints however, black & white images which have one color bit
     //       must be indicated as having a code size of 2."
@@ -491,12 +486,13 @@ size_t msf_gif_frame(MsfGifState * handle,
     maxBitDepth = msf_imax(1, msf_imin(16, maxBitDepth));
     if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
     if (pitchInBytes < 0) pixelData -= pitchInBytes * (handle->height - 1);
-    MsfCookedFrame frame = msf_cook_frame(handle->customAllocatorContext, handle->width, handle->height, pitchInBytes,
-        // msf_imin(maxBitDepth, handle->previousFrame.depth + 1), pixelData);
-        msf_imin(maxBitDepth, handle->previousFrame.depth + 160 / msf_imax(1, handle->previousFrame.count)), pixelData);
+    uint8_t used[1 << 16]; //only 64k, so stack allocating is fine
+    MsfCookedFrame frame =
+        msf_cook_frame(handle->customAllocatorContext, pixelData, used, handle->width, handle->height, pitchInBytes,
+            msf_imin(maxBitDepth, handle->previousFrame.depth + 160 / msf_imax(1, handle->previousFrame.count)));
     if (!frame.pixels) { MSF_GIF_FCLOSE(handle->customOutputContext, handle->fp); return 0; }
     MsfFileBuffer buf = msf_compress_frame(handle->customAllocatorContext,
-        handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame);
+        handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame, used);
     if (!buf.block) { MSF_GIF_FCLOSE(handle->customOutputContext, handle->fp); return 0; }
     if (!MSF_GIF_FWRITE(handle->customOutputContext, handle->fp, buf.block, buf.head - buf.block)) {
         MSF_GIF_FCLOSE(handle->customOutputContext, handle->fp);
