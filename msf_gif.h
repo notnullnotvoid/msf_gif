@@ -13,43 +13,6 @@ USAGE EXAMPLE:
 
     int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
     MsfGifState gifState = {};
-    msf_gif_begin(&gifState, "example.gif", width, height);
-    msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 1
-    msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 2
-    msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 3, etc...
-    msf_gif_end(&gifState);
-
-    int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
-    FILE * fp = fopen("MyGif.gif", "wb");
-    MsfGifState gifState = {};
-    MsfGifReturn mem = msf_gif_begin(&gifState, width, height);
-    fwrite(mem.data, mem.dataSize, 1, fp);
-    free(mem.data);
-    for (uint8_t * frame : frames) {
-        mem = msf_gif_frame(&gifState, frame, centisecondsPerFrame, bitDepth, width * 4);
-        fwrite(mem.data, mem.dataSize, 1, fp);
-        free(mem.data);
-    }
-    mem = msf_gif_end(&gifState);
-    fwrite(mem.data, mem.dataSize, 1, fp);
-    free(mem.data);
-    fclose(fp);
-
-    int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
-    FILE * fp = fopen("MyGif.gif", "wb");
-    MsfGifState gifState = {};
-    MsfGifReturn mem = msf_gif_begin(&gifState, width, height);
-    fwrite(mem.data, mem.dataSize, 1, fp);
-    for (uint8_t * frame : frames) {
-        mem = msf_gif_frame(&gifState, frame, centisecondsPerFrame, bitDepth, width * 4);
-        fwrite(mem.data, mem.dataSize, 1, fp);
-    }
-    mem = msf_gif_end(&gifState);
-    fwrite(mem.data, mem.dataSize, 1, fp);
-    fclose(fp);
-
-    int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
-    MsfGifState gifState = {};
     msf_gif_begin(&gifState, width, height);
     msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 1
     msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 2
@@ -72,7 +35,6 @@ REPLACING MALLOC AND FWRITE:
     Search for their default definitions below to see the exactly what arguments they take.
     If your allocator needs a context pointer, you can set the `customAllocatorContext` field of the MsfGifState struct
     before calling msf_gif_begin(), and it will be passed to all subsequent allocator macro calls.
-    The same goes for file I/O macros, using the `customOutputContext` field.
 
 See end of file for license information.
 */
@@ -89,15 +51,22 @@ typedef struct {
     void * data;
     size_t dataSize;
     size_t allocSize; //for allocators which need to know this information
-} MsfGifReturn;
+} MsfGifResult;
 
-typedef struct {
+typedef struct { //internal use
     uint32_t * pixels;
     int depth, count, rbits, gbits, bbits;
 } MsfCookedFrame;
 
+typedef struct { //internal use
+    uint8_t * block;
+    uint8_t * head;
+    uint8_t * end;
+} MsfFileBuffer;
+
 typedef struct {
     MsfCookedFrame previousFrame;
+    MsfFileBuffer buffer;
     int width, height;
     void * customAllocatorContext;
 } MsfGifState;
@@ -107,11 +76,11 @@ extern "C" {
 #endif //__cplusplus
 
 /**
- * @param width                Image width in pixels - must be the same for the whole gif.
- * @param height               Image height in pixels - must be the same for the whole gif.
- * @return                     A block of memory containing the gif file header. You are responsible for freeing this.
+ * @param width                Image width in pixels.
+ * @param height               Image height in pixels.
+ * @return                     Non-zero on success, 0 on error.
  */
-MsfGifReturn msf_gif_begin(MsfGifState * handle, int width, int height);
+int msf_gif_begin(MsfGifState * handle, int width, int height);
 
 /**
  * @param pixelData            Pointer to raw framebuffer data. Rows must be contiguous in memory, in RGBA8 format.
@@ -127,15 +96,16 @@ MsfGifReturn msf_gif_begin(MsfGifState * handle, int width, int height);
  *                             Please experiment with this value to find what works best for your application.
  * @param pitchInBytes         The number of bytes from the beginning of one row of pixels to the beginning of the next.
  *                             If you want to flip the image, just pass in a negative pitch.
- * @return                     A block of memory containing the encoded frame. You are responsible for freeing this.
+ * @return                     Non-zero on success, 0 on error.
  */
-MsfGifReturn msf_gif_frame(MsfGifState * handle,
+int msf_gif_frame(MsfGifState * handle,
                      uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes);
 
 /**
- * @return                     A block of memory containing the gif file footer. You are responsible for freeing this.
+ * @return                     A block of memory containing the gif file footer, or NULL on error.
+ *                             You are responsible for freeing this.
  */
-MsfGifReturn msf_gif_end(MsfGifState * handle);
+MsfGifResult msf_gif_end(MsfGifState * handle);
 
 #ifdef __cplusplus
 }
@@ -152,16 +122,17 @@ MsfGifReturn msf_gif_end(MsfGifState * handle);
 #define MSF_GIF_ALREADY_IMPLEMENTED_IN_THIS_TRANSLATION_UNIT
 
 //ensure the library user has either defined both of malloc/free, or neither
-#if defined(MSF_GIF_MALLOC) && defined(MSF_GIF_FREE)
-#elif !defined(MSF_GIF_MALLOC) && !defined(MSF_GIF_FREE)
+#if defined(MSF_GIF_MALLOC) && defined(MSF_GIF_REALLOC) && defined(MSF_GIF_FREE) //ok
+#elif !defined(MSF_GIF_MALLOC) && !defined(MSF_GIF_REALLOC) && !defined(MSF_GIF_FREE) //ok
 #else
-#error "You must either define both MSF_GIF_MALLOC and MSF_GIF_FREE, or define neither of them"
+#error "You must either define all of MSF_GIF_MALLOC, MSF_GIF_REALLOC, and MSF_GIF_FREE, or define none of them"
 #endif
 
 //provide default allocator definitions that redirect to the standard global allocator
 #if !defined(MSF_GIF_MALLOC)
 #include <stdlib.h> //malloc, etc.
 #define MSF_GIF_MALLOC(contextPointer, newSize) malloc(newSize)
+#define MSF_GIF_REALLOC(contextPointer, oldMemory, oldSize, newSize) realloc(oldMemory, newSize)
 #define MSF_GIF_FREE(contextPointer, oldMemory, oldSize) free(oldMemory)
 #endif
 
@@ -308,21 +279,28 @@ static MsfCookedFrame msf_cook_frame(void * allocContext, uint8_t * raw, uint8_t
 /// MsfFileBuffer                                                                                                    ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-typedef struct {
-    uint8_t * block;
-    uint8_t * head;
-    uint8_t * end;
-} MsfFileBuffer;
-
 static inline void msf_fb_write_data(MsfFileBuffer * buf, void * data, size_t bytes) {
     memcpy(buf->head, data, bytes);
     buf->head += bytes;
 }
 
-static MsfFileBuffer msf_create_file_buffer(void * allocContext, size_t bytes) {
-    uint8_t * block = (uint8_t *) MSF_GIF_MALLOC(allocContext, bytes);
-    MsfFileBuffer ret = { block, block, block + bytes };
-    return ret;
+static int msf_fb_check(void * allocContext, MsfFileBuffer * buf, size_t bytes) {
+    if (buf->head + bytes < buf->end) return 1;
+
+    size_t byte = buf->head - buf->block;
+    size_t size = buf->end - buf->block;
+
+    //done in a loop so adding payloads larger than the current buffer size will work
+    while (byte + bytes >= size) {
+        size = size * 2;
+    }
+
+    void * moved = MSF_GIF_REALLOC(allocContext, buf->block, buf->end - buf->block, size);
+    if (!moved) { MSF_GIF_FREE(allocContext, buf->block, buf->end - buf->block); buf->block = NULL; return 0; }
+    buf->block = (uint8_t *) moved;
+    buf->head = buf->block + byte;
+    buf->end = buf->block + size;
+    return 1;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -363,19 +341,16 @@ static inline void msf_lzw_reset(MsfStridedList * lzw, int tableSize, int stride
     lzw->stride = stride;
 }
 
-static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int height, int centiSeconds,
-                                        MsfCookedFrame frame, MsfCookedFrame previous, uint8_t * used)
+static int msf_compress_frame(void * allocContext, MsfFileBuffer * buf, int width, int height, int centiSeconds,
+                              MsfCookedFrame frame, MsfCookedFrame previous, uint8_t * used)
 { MsfTimeFunc
-	MsfFileBuffer blank = {0};
-
-    //NOTE: we allocate enough memory for the worst case upfront because it's a reasonable amount
-    //      (about 3/8 the size of a CookedFrame), and prevents us from ever having to check size or realloc
-    int maxBufSize = 24 + 256 * 3 + width * height * 3 / 2;
-    MsfFileBuffer buf = msf_create_file_buffer(allocContext, maxBufSize);
-    if (!buf.block) return blank;
+    //NOTE: we ensure enough memory for theoretical the worst case upfront because it's a reasonable amount,
+    //      and prevents us from ever having to check size or realloc during compression
+    int maxBufSize = 32 + 256 * 3 + width * height * 3 / 2; //misc headers + color table + compressed data
+    if (!msf_fb_check(allocContext, buf, maxBufSize)) { return 0; }
     int lzwAllocSize = 4096 * (frame.count + 1) * sizeof(int16_t);
     MsfStridedList lzw = { (int16_t *) MSF_GIF_MALLOC(allocContext, lzwAllocSize) };
-    if (!lzw.data) { MSF_GIF_FREE(allocContext, buf.block, buf.end - buf.block); return blank; }
+    if (!lzw.data) { return 0; }
 
     //allocate tlb
     int totalBits = frame.rbits + frame.gbits + frame.bbits;
@@ -419,20 +394,20 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
     memcpy(&headerBytes[13], &width, 2);
     memcpy(&headerBytes[15], &height, 2);
     headerBytes[17] |= tableBits - 1;
-    msf_fb_write_data(&buf, headerBytes, 18);
+    msf_fb_write_data(buf, headerBytes, 18);
 
     //local color table
-    msf_fb_write_data(&buf, table, tableSize * sizeof(Color3));
-    *buf.head++ = tableBits;
+    msf_fb_write_data(buf, table, tableSize * sizeof(Color3));
+    *buf->head++ = tableBits;
 
     //prep block
-    memset(buf.head, 0, 260);
-    buf.head[0] = 255;
+    memset(buf->head, 0, 260);
+    buf->head[0] = 255;
     uint32_t blockBits = 8; //relative to block.head
 
     //SPEC: "Encoders should output a Clear code as the first code of each image data stream."
     msf_lzw_reset(&lzw, tableSize, tableIdx);
-    msf_put_code(&buf, &blockBits, msf_bit_log(lzw.len - 1), tableSize);
+    msf_put_code(buf, &blockBits, msf_bit_log(lzw.len - 1), tableSize);
 
     int lastCode = hasSamePal && frame.pixels[0] == previous.pixels[0]? 0 : tlb[frame.pixels[0]];
     MsfTimeLoop("compress") for (int i = 1; i < width * height; ++i) {
@@ -444,11 +419,11 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
         if (code < 0) {
             //write to code stream
             int codeBits = msf_bit_log(lzw.len - 1);
-            msf_put_code(&buf, &blockBits, codeBits, lastCode);
+            msf_put_code(buf, &blockBits, codeBits, lastCode);
 
             if (lzw.len > 4095) {
                 //reset buffer code table
-                msf_put_code(&buf, &blockBits, codeBits, tableSize);
+                msf_put_code(buf, &blockBits, codeBits, tableSize);
                 msf_lzw_reset(&lzw, tableSize, tableIdx);
             } else {
                 (&lzw.data[lastCode * lzw.stride])[color] = lzw.len;
@@ -465,46 +440,46 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
     MSF_GIF_FREE(allocContext, previous.pixels, width * height * sizeof(uint32_t));
 
     //write code for leftover index buffer contents, then the end code
-    msf_put_code(&buf, &blockBits, msf_imin(12, msf_bit_log(lzw.len - 1)), lastCode);
-    msf_put_code(&buf, &blockBits, msf_imin(12, msf_bit_log(lzw.len)), tableSize + 1);
+    msf_put_code(buf, &blockBits, msf_imin(12, msf_bit_log(lzw.len - 1)), lastCode);
+    msf_put_code(buf, &blockBits, msf_imin(12, msf_bit_log(lzw.len)), tableSize + 1);
 
     //flush remaining data
     if (blockBits > 8) {
         int bytes = (blockBits + 7) / 8; //round up
-        buf.head[0] = bytes - 1;
-        buf.head += bytes;
+        buf->head[0] = bytes - 1;
+        buf->head += bytes;
     }
 
-    *buf.head++ = 0; //terminating block
-
-    return buf;
+    *buf->head++ = 0; //terminating block
+    return 1;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// Incremental API                                                                                                  ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-MsfGifReturn msf_gif_begin(MsfGifState * handle, int width, int height) { MsfTimeFunc
+int msf_gif_begin(MsfGifState * handle, int width, int height) { MsfTimeFunc
     MsfCookedFrame empty = {0}; //god I hate MSVC...
     handle->previousFrame = empty;
-    handle->previousFrame.depth = 15;
     handle->width = width;
     handle->height = height;
+
+    //setup buffer
+    if (!(handle->buffer.block = (uint8_t *) MSF_GIF_MALLOC(handle->customAllocatorContext, 1024 * 1024))) return 0;
+    handle->buffer.head = handle->buffer.block;
+    handle->buffer.end = handle->buffer.block + 1024 * 1024;
 
     //NOTE: because __attribute__((__packed__)) is annoyingly compiler-specific, we do this unreadable weirdness
     char headerBytes[33] = "GIF89a\0\0\0\0\x10\0\0" "\x21\xFF\x0BNETSCAPE2.0\x03\x01\0\0\0";
     memcpy(&headerBytes[6], &width, 2);
     memcpy(&headerBytes[8], &height, 2);
-    MsfGifReturn ret = { MSF_GIF_MALLOC(handle->customAllocatorContext, 32) };
-    if (ret.data) { memcpy(ret.data, headerBytes, 32); ret.dataSize = ret.allocSize = 32; }
-    return ret;
+    msf_fb_write_data(&handle->buffer, headerBytes, 32);
+    return 1;
 }
 
-MsfGifReturn msf_gif_frame(MsfGifState * handle,
-                     uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes)
+int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes)
 { MsfTimeFunc
-    int cookedAllocSize = handle->width * handle->height * sizeof(uint32_t);
-    MsfGifReturn error = {0};
+    if (!handle->buffer.block) { return 0; }
 
     maxBitDepth = msf_imax(1, msf_imin(16, maxBitDepth));
     if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
@@ -515,36 +490,39 @@ MsfGifReturn msf_gif_frame(MsfGifState * handle,
         msf_cook_frame(handle->customAllocatorContext, pixelData, used, handle->width, handle->height, pitchInBytes,
             msf_imin(maxBitDepth, handle->previousFrame.depth + 160 / msf_imax(1, handle->previousFrame.count)));
     if (!frame.pixels) {
+        int cookedAllocSize = handle->width * handle->height * sizeof(uint32_t);
         MSF_GIF_FREE(handle->customAllocatorContext, handle->previousFrame.pixels, cookedAllocSize);
-        MsfCookedFrame empty = {0};
-        handle->previousFrame = empty;
-        handle->previousFrame.depth = 16;
-        return error;
+        MSF_GIF_FREE(handle->customAllocatorContext, handle->buffer.block, handle->buffer.end - handle->buffer.block);
+        handle->buffer.block = NULL;
+        return 0;
     }
 
-    MsfFileBuffer buf = msf_compress_frame(handle->customAllocatorContext,
-        handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame, used);
-    if (!buf.block) {
+    if (!msf_compress_frame(handle->customAllocatorContext, &handle->buffer,
+        handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame, used))
+    {
+        int cookedAllocSize = handle->width * handle->height * sizeof(uint32_t);
         MSF_GIF_FREE(handle->customAllocatorContext, frame.pixels, cookedAllocSize);
         MSF_GIF_FREE(handle->customAllocatorContext, handle->previousFrame.pixels, cookedAllocSize);
-        MsfCookedFrame empty = {0};
-        handle->previousFrame = empty;
-        handle->previousFrame.depth = 16;
-        return error;
+        handle->buffer.block = NULL;
+        return 0;
     }
 
     handle->previousFrame = frame;
-    MsfGifReturn ret = { buf.block, buf.head - buf.block, buf.end - buf.block };
-    return ret;
+    return 1;
 }
 
-MsfGifReturn msf_gif_end(MsfGifState * handle) { MsfTimeFunc
+MsfGifResult msf_gif_end(MsfGifState * handle) { MsfTimeFunc
+    if (!handle->buffer.block) { MsfGifResult empty = {0}; return empty; }
+
     int cookedAllocSize = handle->width * handle->height * sizeof(uint32_t);
     MSF_GIF_FREE(handle->customAllocatorContext, handle->previousFrame.pixels, cookedAllocSize);
 
-    uint8_t trailingMarker = 0x3B;
-    MsfGifReturn ret = { MSF_GIF_MALLOC(handle->customAllocatorContext, 1) };
-    if (ret.data) { memcpy(ret.data, &trailingMarker, 1); ret.dataSize = ret.allocSize = 1; }
+    *handle->buffer.head++ = 0x3B; //trailing marker
+    MsfGifResult ret = {
+        handle->buffer.block,
+        handle->buffer.head - handle->buffer.block,
+        handle->buffer.end - handle->buffer.block
+    };
     return ret;
 }
 

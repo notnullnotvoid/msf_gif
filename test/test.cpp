@@ -55,21 +55,21 @@ int main() {
         double pre = get_time();
         MsfGifState handle = {};
         handle.customAllocatorContext = path;
-        FILE * fp = fopen(path, "wb");
-        assert(fp);
-        MsfGifReturn begin = msf_gif_begin(&handle, blob->width, blob->height);
-        assert(fwrite(begin.data, begin.dataSize, 1, fp)); free(begin.data);
+        assert(msf_gif_begin(&handle, blob->width, blob->height));
         for (int j = 0; j < blob->frames; ++j) {
             // handle.customAllocatorContext = dsprintf(nullptr, "%s frame %d", path, j);
             int pitch = flipped? -blob->width * 4 : blob->width * 4;
-            MsfGifReturn frame = msf_gif_frame(&handle,
-                (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 16, pitch);
-            assert(fwrite(frame.data, frame.dataSize, 1, fp)); free(frame.data);
+            assert(msf_gif_frame(&handle,
+                (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 16, pitch));
         }
-        MsfGifReturn end = msf_gif_end(&handle);
-        assert(fwrite(end.data, end.dataSize, 1, fp)); free(end.data);
+        MsfGifResult result = msf_gif_end(&handle);
+        assert(result.data);
+        FILE * fp = fopen(path, "wb");
+        assert(fp);
+        assert(fwrite(result.data, result.dataSize, 1, fp));
         size_t out = ftell(fp);
         fclose(fp);
+        free(result.data);
         timers.add({ get_time() - pre, (size_t)(blob->frames * blob->width * blob->height * 4), out });
     }
 
