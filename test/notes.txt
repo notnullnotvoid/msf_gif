@@ -1,7 +1,5 @@
 
 2.0 TODOs:
-- tighten up memory usage (free earlier, allocate less)
-- consult spec to be less conservative with trailing codes during compression
 - make writing to memory the default (only?) API behavior?
 - async API?? (by default????)
 - NEON SIMD???

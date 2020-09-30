@@ -345,10 +345,11 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
 	MsfFileBuffer blank = {0};
 
     //NOTE: we allocate enough memory for the worst case upfront because it's a reasonable amount
-    //      (about half the size of a CookedFrame), and prevents us from ever having to check size or realloc
-    MsfFileBuffer buf = msf_create_file_buffer(allocContext, 1024 + width * height * 2);
+    //      (about 3/2 the size of a CookedFrame), and prevents us from ever having to check size or realloc
+    int maxBufSize = 24 + 256 * 3 + width * height * 3 / 2;
+    MsfFileBuffer buf = msf_create_file_buffer(allocContext, maxBufSize);
     if (!buf.block) return blank;
-    int lzwAllocSize = 4096 * 256 * sizeof(int16_t);
+    int lzwAllocSize = 4096 * (frame.count + 1) * sizeof(int16_t);
     MsfStridedList lzw = { (int16_t *) MSF_GIF_MALLOC(allocContext, lzwAllocSize) };
     if (!lzw.data) { MSF_GIF_FREE(allocContext, buf.block, buf.end - buf.block); return blank; }
 
@@ -380,8 +381,11 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
             ++tableIdx;
         }
     }
+    MSF_GIF_FREE(allocContext, frame.used, msfUsedAllocSize);
 
-    int tableBits = msf_bit_log(tableIdx - 1);
+    //SPEC: "Because of some algorithmic constraints however, black & white images which have one color bit
+    //       must be indicated as having a code size of 2."
+    int tableBits = msf_imax(2, msf_bit_log(tableIdx - 1));
     int tableSize = 1 << tableBits;
     //NOTE: we don't just compare `depth` field here because it will be wrong for the first frame and we will segfault
     int hasSamePal = frame.rbits == previous.rbits && frame.gbits == previous.gbits && frame.bbits == previous.bbits;
@@ -405,6 +409,9 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
     buf.head[0] = 255;
     uint32_t blockBits = 8; //relative to block.head
 
+    //SPEC: "Encoders should output a Clear code as the first code of each image data stream."
+    msf_put_code(&buf, &blockBits, msf_bit_log(lzw.len - 1), tableSize);
+
     int lastCode = hasSamePal && frame.pixels[0] == previous.pixels[0]? 0 : tlb[frame.pixels[0]];
     MsfTimeLoop("compress") for (int i = 1; i < width * height; ++i) {
         //PERF: branching vs. branchless version of this line is observed to have no discernable impact on speed
@@ -417,11 +424,7 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
             int codeBits = msf_bit_log(lzw.len - 1);
             msf_put_code(&buf, &blockBits, codeBits, lastCode);
 
-            //NOTE: [I THINK] we need to leave room for 2 more codes (leftover and end code)
-            //      because we don't ever reset the table after writing the leftover bits
-            //Q: is my thinking correct on this one?
-            //Q: why can't we just check when writing out those codes? too verbose? can't we factor to a funtion?
-            if (lzw.len > 4094) {
+            if (lzw.len > 4095) {
                 //reset buffer code table
                 msf_put_code(&buf, &blockBits, codeBits, tableSize);
                 msf_lzw_reset(&lzw, tableSize, tableIdx);
@@ -436,10 +439,12 @@ static MsfFileBuffer msf_compress_frame(void * allocContext, int width, int heig
         }
     }
 
-    //write code for leftover index buffer contents, then the end code
     MSF_GIF_FREE(allocContext, lzw.data, lzwAllocSize);
-    msf_put_code(&buf, &blockBits, msf_bit_log(lzw.len - 1), lastCode);
-    msf_put_code(&buf, &blockBits, msf_bit_log(lzw.len), tableSize + 1);
+    MSF_GIF_FREE(allocContext, previous.pixels, width * height * sizeof(uint32_t));
+
+    //write code for leftover index buffer contents, then the end code
+    msf_put_code(&buf, &blockBits, msf_imin(12, msf_bit_log(lzw.len - 1)), lastCode);
+    msf_put_code(&buf, &blockBits, msf_imin(12, msf_bit_log(lzw.len)), tableSize + 1);
 
     //flush remaining data
     if (blockBits > 8) {
@@ -499,9 +504,6 @@ size_t msf_gif_frame(MsfGifState * handle,
     }
     handle->totalBytesWritten += buf.head - buf.block;
     MSF_GIF_FREE(handle->customAllocatorContext, buf.block, buf.end - buf.block);
-    MSF_GIF_FREE(handle->customAllocatorContext, frame.used, msfUsedAllocSize);
-    MSF_GIF_FREE(handle->customAllocatorContext,
-        handle->previousFrame.pixels, handle->width * handle->height * sizeof(uint32_t));
     handle->previousFrame = frame;
     return handle->totalBytesWritten;
 }
