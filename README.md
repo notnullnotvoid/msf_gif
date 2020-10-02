@@ -1,5 +1,5 @@
 A single-header animated GIF exporter, suitable for recording gifs in realtime.
-* **Easy to use**. Single-header C code, depending only on the C standard library. Simple and minimal API.
+* **Easy to use**. Single-header C code compiles as C99 or C++89, depending only on the C standard library headers. Simple and minimal API.
 * **High-quality results**. Uses a straightforward palette selection and dithering algorithm that is guaranteed to provide equal fidelity for all areas of the image, thereby avoiding the artifacts that are typical of the kind of frequency-based adaptive color quantization algorithms used in most gif encoders. See the side-by-side comparison below for an example.
 * **Small file sizes**. Uses delta encoding between frames and a compression-friendly dithering kernel, resulting in significantly smaller files than most gif encoders, without sacrificing quality.
 * **Fast**. Designed for speed, and uses SSE where available to encode at hundreds of megabytes a second, several times faster than comparable gif libraries.
@@ -31,11 +31,15 @@ Everywhere else, just include the header like normal.
 ```cpp
 int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
 MsfGifState gifState = {};
-msf_gif_begin(&gifState, "example.gif", width, height);
+msf_gif_begin(&gifState, width, height);
 msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 1
 msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 2
 msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 3, etc...
-msf_gif_end(&gifState);
+MsfGifResult result = msf_gif_end(&gifState);
+FILE * fp = fopen("MyGif.gif", "wb");
+fwrite(result.data, result.dataSize, 1, fp);
+fclose(fp);
+free(result.data);
 ```
 Detailed function documentation can be found in the header.
 
