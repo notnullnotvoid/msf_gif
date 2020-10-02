@@ -28,18 +28,21 @@ Detailed function documentation can be found in the header section below.
 
 REPLACING MALLOC AND FWRITE:
 
-    This library uses malloc+free internally for memory allocation and fopen+fwrite+fclose for file output.
-    To facilitate custom memory management and I/O, these calls go through macros, which can be redefined.
-    In order to replace them, simply #define the relevant macros in the same place where you #define MSF_GIF_IMPL.
-    The macros are:   MSF_GIF_MALLOC, MSF_GIF_FREE,   MSF_GIF_FOPEN, MSF_GIF_FWRITE, MSF_GIF_FCLOSE.
-    Search for their default definitions below to see the exactly what arguments they take.
+    This library uses malloc+realloc+free internally for memory allocation.
+    To facilitate integration with custom memory allocators, these calls go through macros, which can be redefined.
+    The expected function signature equivalents of the macros are as follows:
+
+    void * MSF_GIF_MALLOC(void * context, size_t newSize)
+    void * MSF_GIF_REALLOC(void * context, void * oldMemory, size_t oldSize, size_t newSize)
+    void MSF_GIF_FREE(void * context, void * oldMemory, size_t oldSize)
+
     If your allocator needs a context pointer, you can set the `customAllocatorContext` field of the MsfGifState struct
     before calling msf_gif_begin(), and it will be passed to all subsequent allocator macro calls.
 
 See end of file for license information.
 */
 
-//version 1.2
+//version 2.0
 
 #ifndef MSF_GIF_H
 #define MSF_GIF_H
@@ -120,6 +123,10 @@ MsfGifResult msf_gif_end(MsfGifState * handle);
 #ifdef MSF_GIF_IMPL
 #ifndef MSF_GIF_ALREADY_IMPLEMENTED_IN_THIS_TRANSLATION_UNIT
 #define MSF_GIF_ALREADY_IMPLEMENTED_IN_THIS_TRANSLATION_UNIT
+
+#ifndef MSF_GIF_BUFFER_INIT_SIZE
+#define MSF_GIF_BUFFER_INIT_SIZE 1024 * 1024 * 4 //4MB by default, you can increase this if you want to realloc less
+#endif
 
 //ensure the library user has either defined both of malloc/free, or neither
 #if defined(MSF_GIF_MALLOC) && defined(MSF_GIF_REALLOC) && defined(MSF_GIF_FREE) //ok
@@ -285,7 +292,7 @@ static inline void msf_fb_write_data(MsfFileBuffer * buf, void * data, size_t by
 }
 
 static int msf_fb_check(void * allocContext, MsfFileBuffer * buf, size_t bytes) {
-    if (buf->head + bytes < buf->end) return 1;
+    if (buf->head + bytes < buf->end) return 1;   MsfTimeFunc
 
     size_t byte = buf->head - buf->block;
     size_t size = buf->end - buf->block;
@@ -465,9 +472,10 @@ int msf_gif_begin(MsfGifState * handle, int width, int height) { MsfTimeFunc
     handle->height = height;
 
     //setup buffer
-    if (!(handle->buffer.block = (uint8_t *) MSF_GIF_MALLOC(handle->customAllocatorContext, 1024 * 1024))) return 0;
+    handle->buffer.block = (uint8_t *) MSF_GIF_MALLOC(handle->customAllocatorContext, MSF_GIF_BUFFER_INIT_SIZE);
+    if (!handle->buffer.block) { return 0; }
     handle->buffer.head = handle->buffer.block;
-    handle->buffer.end = handle->buffer.block + 1024 * 1024;
+    handle->buffer.end = handle->buffer.block + MSF_GIF_BUFFER_INIT_SIZE;
 
     //NOTE: because __attribute__((__packed__)) is annoyingly compiler-specific, we do this unreadable weirdness
     char headerBytes[33] = "GIF89a\0\0\0\0\x10\0\0" "\x21\xFF\x0BNETSCAPE2.0\x03\x01\0\0\0";
@@ -518,11 +526,9 @@ MsfGifResult msf_gif_end(MsfGifState * handle) { MsfTimeFunc
     MSF_GIF_FREE(handle->customAllocatorContext, handle->previousFrame.pixels, cookedAllocSize);
 
     *handle->buffer.head++ = 0x3B; //trailing marker
-    MsfGifResult ret = {
-        handle->buffer.block,
-        handle->buffer.head - handle->buffer.block,
-        handle->buffer.end - handle->buffer.block
-    };
+    MsfGifResult ret = { handle->buffer.block,
+                         (size_t) (handle->buffer.head - handle->buffer.block),
+                         (size_t) (handle->buffer.end - handle->buffer.block) };
     return ret;
 }
 

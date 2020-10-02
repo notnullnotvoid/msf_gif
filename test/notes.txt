@@ -1,18 +1,13 @@
 
 2.0 TODOs:
-- async API?? (by default????)
-- NEON SIMD???
 - allow writing with a specific palette????
 
-RC TODOs:
-- document memory usage?
-- remove error handling of memory allocation failure because I've decided that's stupid
-	- actually, now that I've added custom allocator support, and custom allocators might fail for various reasons, maybe don't axe this?
 
-
-
-- async/multithreaded API
+future TODOs:
+- NEON SIMD
+- async/multithreaded API?
 - runtime option for channel importance order?
+- API for writing pre-palettized data?
 - allow resetting thread id for more readable output from trace.cpp?
 - trace.cpp cumulative time reporting tools
 

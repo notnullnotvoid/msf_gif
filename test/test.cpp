@@ -64,13 +64,12 @@ int main() {
         }
         MsfGifResult result = msf_gif_end(&handle);
         assert(result.data);
+        timers.add({ get_time() - pre, (size_t)(blob->frames * blob->width * blob->height * 4), result.dataSize });
         FILE * fp = fopen(path, "wb");
         assert(fp);
         assert(fwrite(result.data, result.dataSize, 1, fp));
-        size_t out = ftell(fp);
         fclose(fp);
         free(result.data);
-        timers.add({ get_time() - pre, (size_t)(blob->frames * blob->width * blob->height * 4), out });
     }
 
     printf("\n");

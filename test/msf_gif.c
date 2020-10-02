@@ -10,7 +10,7 @@ static void * dummy_malloc(void * context, int newSize) {
 
 static void * dummy_realloc(void * context, void * old, int oldSize, int newSize) {
 	void * ret = realloc(old, newSize);
-	printf("REALLOC context: %s, old: %p, oldSize: %d, newSize: %d, new: %p\n", context, old, oldSize, newSize, ret);
+	// printf("REALLOC context: %s, old: %p, oldSize: %d, newSize: %d, new: %p\n", context, old, oldSize, newSize, ret);
 	return ret;
 }
 
