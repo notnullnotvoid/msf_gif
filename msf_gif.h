@@ -26,7 +26,7 @@ USAGE EXAMPLE:
 Detailed function documentation can be found in the header section below.
 
 
-REPLACING MALLOC AND FWRITE:
+REPLACING MALLOC:
 
     This library uses malloc+realloc+free internally for memory allocation.
     To facilitate integration with custom memory allocators, these calls go through macros, which can be redefined.
