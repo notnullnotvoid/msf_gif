@@ -13,8 +13,8 @@ static uint64_t tscStart;
 		LARGE_INTEGER counter, frequency;
 		assert(QueryPerformanceCounter(&counter));
 		assert(QueryPerformanceFrequency(&frequency));
-		double seconds = counter.QuadPart / (double) frequency.QuadPart;
-		return seconds * 1'000'000'000.0 - nanoStart;
+		double seconds = (counter.QuadPart - nanoStart) / (double) frequency.QuadPart;
+		return seconds * 1'000'000'000.0;
 	}
 #else
 	#include <time.h>

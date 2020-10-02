@@ -498,8 +498,8 @@ int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPer
         msf_cook_frame(handle->customAllocatorContext, pixelData, used, handle->width, handle->height, pitchInBytes,
             msf_imin(maxBitDepth, handle->previousFrame.depth + 160 / msf_imax(1, handle->previousFrame.count)));
     if (!frame.pixels) {
-        int cookedAllocSize = handle->width * handle->height * sizeof(uint32_t);
-        MSF_GIF_FREE(handle->customAllocatorContext, handle->previousFrame.pixels, cookedAllocSize);
+        MSF_GIF_FREE(handle->customAllocatorContext,
+                     handle->previousFrame.pixels, handle->width * handle->height * sizeof(uint32_t));
         MSF_GIF_FREE(handle->customAllocatorContext, handle->buffer.block, handle->buffer.end - handle->buffer.block);
         handle->buffer.block = NULL;
         return 0;
@@ -508,9 +508,9 @@ int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPer
     if (!msf_compress_frame(handle->customAllocatorContext, &handle->buffer,
         handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame, used))
     {
-        int cookedAllocSize = handle->width * handle->height * sizeof(uint32_t);
-        MSF_GIF_FREE(handle->customAllocatorContext, frame.pixels, cookedAllocSize);
-        MSF_GIF_FREE(handle->customAllocatorContext, handle->previousFrame.pixels, cookedAllocSize);
+        MSF_GIF_FREE(handle->customAllocatorContext, frame.pixels, handle->width * handle->height * sizeof(uint32_t));
+        MSF_GIF_FREE(handle->customAllocatorContext,
+                     handle->previousFrame.pixels, handle->width * handle->height * sizeof(uint32_t));
         handle->buffer.block = NULL;
         return 0;
     }
@@ -522,8 +522,8 @@ int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPer
 MsfGifResult msf_gif_end(MsfGifState * handle) { MsfTimeFunc
     if (!handle->buffer.block) { MsfGifResult empty = {0}; return empty; }
 
-    int cookedAllocSize = handle->width * handle->height * sizeof(uint32_t);
-    MSF_GIF_FREE(handle->customAllocatorContext, handle->previousFrame.pixels, cookedAllocSize);
+    MSF_GIF_FREE(handle->customAllocatorContext,
+                 handle->previousFrame.pixels, handle->width * handle->height * sizeof(uint32_t));
 
     *handle->buffer.head++ = 0x3B; //trailing marker
     MsfGifResult ret = { handle->buffer.block,
