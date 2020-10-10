@@ -39,7 +39,7 @@ MsfGifResult result = msf_gif_end(&gifState);
 FILE * fp = fopen("MyGif.gif", "wb");
 fwrite(result.data, result.dataSize, 1, fp);
 fclose(fp);
-MSF_GIF_FREE(result.data);
+MSF_GIF_FREE(gifState.customAllocatorContext, result.data, result.dataSize);
 ```
 Detailed function documentation can be found in the header.
 
