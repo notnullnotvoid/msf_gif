@@ -69,7 +69,7 @@ int main() {
         assert(fp);
         assert(fwrite(result.data, result.dataSize, 1, fp));
         fclose(fp);
-        free(result.data);
+        msf_gif_free(result);
     }
 
     printf("\n");
