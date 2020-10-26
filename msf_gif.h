@@ -65,7 +65,6 @@ typedef struct { //internal use
 
 typedef struct {
     MsfCookedFrame previousFrame;
-    // MsfFileBuffer buffer;
     uint8_t * listHead;
     uint8_t * listTail;
     int width, height;
@@ -193,7 +192,7 @@ static inline int msf_imax(int a, int b) { return b < a? a : b; }
 static MsfCookedFrame msf_cook_frame(void * allocContext, uint8_t * raw, uint8_t * used,
                                      int width, int height, int pitch, int depth)
 { MsfTimeFunc
-	//bit depth for each channel
+    //bit depth for each channel
     const static int rdepths[17] = { 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5 };
     const static int gdepths[17] = { 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6 };
     const static int bdepths[17] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5 };
@@ -279,7 +278,7 @@ static MsfCookedFrame msf_cook_frame(void * allocContext, uint8_t * raw, uint8_t
     } while (count >= 256 && --depth);
 
     MsfCookedFrame ret = { cooked, depth, count, rdepths[depth], gdepths[depth], bdepths[depth] };
-	return ret;
+    return ret;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
