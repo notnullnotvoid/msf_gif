@@ -39,7 +39,7 @@ MsfGifResult result = msf_gif_end(&gifState);
 FILE * fp = fopen("MyGif.gif", "wb");
 fwrite(result.data, result.dataSize, 1, fp);
 fclose(fp);
-free(result.data);
+msf_gif_free(result);
 ```
 Detailed function documentation can be found in the header.
 

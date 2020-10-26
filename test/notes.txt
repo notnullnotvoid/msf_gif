@@ -1,8 +1,4 @@
 
-2.0 TODOs:
-- allow writing with a specific palette????
-
-
 future TODOs:
 - NEON SIMD
 - async/multithreaded API?
@@ -15,3 +11,19 @@ future TODOs:
 
 https://docs.microsoft.com/en-us/windows/desktop/ProcThread/creating-threads
 https://docs.microsoft.com/en-us/windows/desktop/sync/synchronization-barriers
+
+
+
+Regarding multithreading:
+
+I've considered adding multithreading support into the library, in the form of an asynchronous API. The reason for this is that, although the library is fast, it can still take several milliseconds to encode a frame on a slow machine, especially as the frames get larger. I figured it might be nice to have an easy way to call into the library without blocking on the main thread. However, this would also complicate the library significantly, as threading pre-C11 is very platform-dependent, and in my experience applications tend to want to do threading their own way, which the library should probably not impose on. The simplest multithreaded solution, which should be good enough for basically all uses of the library that I can imagine, is to simply run the single-threaded API in a background thread. This is easy enough to implement that I don't feel it's unreasonable to put the burden on library users to do this however they see fit. Multithreading is still not completely off the table, but I'm leaving it alone for now.
+
+
+
+FWRITE context: new/floor.gif, handle: 0x7fff9790c030, buffer: 0x110b40000, bytes: 17212, written: 1
+FWRITE context: new/floor.gif, handle: 0x7fff9790c030, buffer: 0x7fc394010000, bytes: 14211, written: 1
+FWRITE context: new/floor.gif, handle: 0x7fff9790c030, buffer: 0x110b40000, bytes: 17105, written: 1
+FWRITE context: new/floor.gif, handle: 0x7fff9790c030, buffer: 0x7fc39580c200, bytes: 14034, written: 1
+FWRITE context: new/floor.gif, handle: 0x7fff9790c030, buffer: 0x7fc394010000, bytes: 14197, written: 1
+
+what's with it bouncing back and forth between high and low addresses like that?
