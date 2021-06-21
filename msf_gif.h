@@ -69,6 +69,7 @@ typedef struct {
     uint8_t * listTail;
     int width, height;
     void * customAllocatorContext;
+    int16_t * lzwMem;
 } MsfGifState;
 
 #ifdef __cplusplus
@@ -281,9 +282,11 @@ static MsfCookedFrame msf_cook_frame(void * allocContext, uint8_t * raw, uint8_t
 /// Frame Compression                                                                                                ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// typedef struct MsfBufferHeader
 typedef struct {
     uint8_t * next;
     size_t size;
+    //A flexible array member would actually be pretty nice here. Sadly, they're not standard in C++. Fuck you, Bjarne!
 } MsfBufferHeader;
 
 static inline int msf_put_code(uint8_t * * writeHead, uint32_t * blockBits, int len, uint32_t code) {
@@ -321,7 +324,7 @@ static inline void msf_lzw_reset(MsfStridedList * lzw, int tableSize, int stride
 }
 
 static uint8_t * msf_compress_frame(void * allocContext, int width, int height, int centiSeconds,
-                                    MsfCookedFrame frame, MsfCookedFrame previous, uint8_t * used)
+                                    MsfCookedFrame frame, MsfCookedFrame previous, uint8_t * used, int16_t * lzwMem)
 { MsfTimeFunc
     //NOTE: we reserve enough memory for theoretical the worst case upfront because it's a reasonable amount,
     //      and prevents us from ever having to check size or realloc during compression
@@ -330,8 +333,7 @@ static uint8_t * msf_compress_frame(void * allocContext, int width, int height, 
     if (!allocation) { return NULL; }
     uint8_t * writeBase = allocation + sizeof(MsfBufferHeader);
     uint8_t * writeHead = writeBase;
-    int lzwAllocSize = 4096 * (frame.count + 1) * sizeof(int16_t);
-    MsfStridedList lzw = { (int16_t *) MSF_GIF_MALLOC(allocContext, lzwAllocSize) };
+    MsfStridedList lzw = { lzwMem };
     if (!lzw.data) { MSF_GIF_FREE(allocContext, allocation, maxBufSize); return NULL; }
 
     //allocate tlb
@@ -420,7 +422,6 @@ static uint8_t * msf_compress_frame(void * allocContext, int width, int height, 
         }
     }
 
-    MSF_GIF_FREE(allocContext, lzw.data, lzwAllocSize);
     MSF_GIF_FREE(allocContext, previous.pixels, width * height * sizeof(uint32_t));
 
     //write code for leftover index buffer contents, then the end code
@@ -448,15 +449,44 @@ static uint8_t * msf_compress_frame(void * allocContext, int width, int height, 
 /// Incremental API                                                                                                  ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+static const int lzwAllocSize = 4096 * 256 * sizeof(int16_t);
+
+//NOTE: by C standard library conventions, freeing NULL should be a no-op,
+//      but just in case the user's custom free doesn't follow that rule, we do null checks on our end as well.
+static void msf_free_gif_state(MsfGifState * handle) {
+    if (handle->previousFrame.pixels) MSF_GIF_FREE(handle->customAllocatorContext, handle->previousFrame.pixels,
+                                                   handle->width * handle->height * sizeof(uint32_t));
+    if (handle->lzwMem) MSF_GIF_FREE(handle->customAllocatorContext, handle->lzwMem, lzwAllocSize);
+    for (uint8_t * node = handle->listHead; node;) {
+        MsfBufferHeader * header = (MsfBufferHeader *) node;
+        node = header->next;
+        MSF_GIF_FREE(handle->customAllocatorContext, header, sizeof(MsfBufferHeader) + header->size);
+    }
+    handle->listHead = NULL; //this implicitly marks the handle as invalid
+}
+
 int msf_gif_begin(MsfGifState * handle, int width, int height) { MsfTimeFunc
+    //NOTE: we cannot stomp the entire struct to zero because we must preserve `customAllocatorContext`.
     MsfCookedFrame empty = {0}; //god I hate MSVC...
     handle->previousFrame = empty;
     handle->width = width;
     handle->height = height;
 
+    //set all heap-memory-owning pointers to NULL so that we can cleanup using `msf_free_gif_state()` during init
+    handle->listHead = NULL;
+    handle->lzwMem = NULL;
+
+    //allocate memory for LZW buffer
+    //NOTE: Unfortunately we can't just use stack memory for the LZW table because it's 2MB,
+    //      which is more stack space than most operating systems give by default,
+    //      and we can't realistically expect users to be willing to override that just to use our library,
+    //      so we have to allocate this on the heap.
+    handle->lzwMem = (int16_t *) MSF_GIF_MALLOC(handle->customAllocatorContext, lzwAllocSize);
+    if (!handle->lzwMem) { msf_free_gif_state(handle); return 0; }
+
     //setup header buffer header (lol)
     handle->listHead = (uint8_t *) MSF_GIF_MALLOC(handle->customAllocatorContext, sizeof(MsfBufferHeader) + 32);
-    if (!handle->listHead) { return 0; }
+    if (!handle->listHead) { msf_free_gif_state(handle); return 0; }
     handle->listTail = handle->listHead;
     MsfBufferHeader * header = (MsfBufferHeader *) handle->listHead;
     header->next = NULL;
@@ -482,33 +512,15 @@ int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPer
     MsfCookedFrame frame =
         msf_cook_frame(handle->customAllocatorContext, pixelData, used, handle->width, handle->height, pitchInBytes,
             msf_imin(maxBitDepth, handle->previousFrame.depth + 160 / msf_imax(1, handle->previousFrame.count)));
-    //TODO: de-duplicate cleanup code
-    if (!frame.pixels) {
-        MSF_GIF_FREE(handle->customAllocatorContext,
-                     handle->previousFrame.pixels, handle->width * handle->height * sizeof(uint32_t));
-        for (uint8_t * node = handle->listHead; node;) {
-            MsfBufferHeader * header = (MsfBufferHeader *) node;
-            node = header->next;
-            MSF_GIF_FREE(handle->customAllocatorContext, header, sizeof(MsfBufferHeader) + header->size);
-        }
-        handle->listHead = handle->listTail = NULL;
-        return 0;
-    }
+    if (!frame.pixels) { msf_free_gif_state(handle); return 0; }
 
     uint8_t * buffer = msf_compress_frame(handle->customAllocatorContext,
-        handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame, used);
+        handle->width, handle->height, centiSecondsPerFame, frame, handle->previousFrame, used, handle->lzwMem);
     ((MsfBufferHeader *) handle->listTail)->next = buffer;
     handle->listTail = buffer;
     if (!buffer) {
         MSF_GIF_FREE(handle->customAllocatorContext, frame.pixels, handle->width * handle->height * sizeof(uint32_t));
-        MSF_GIF_FREE(handle->customAllocatorContext,
-                     handle->previousFrame.pixels, handle->width * handle->height * sizeof(uint32_t));
-        for (uint8_t * node = handle->listHead; node;) {
-            MsfBufferHeader * header = (MsfBufferHeader *) node;
-            node = header->next;
-            MSF_GIF_FREE(handle->customAllocatorContext, header, sizeof(MsfBufferHeader) + header->size);
-        }
-        handle->listHead = handle->listTail = NULL;
+        msf_free_gif_state(handle);
         return 0;
     }
 
@@ -518,9 +530,6 @@ int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPer
 
 MsfGifResult msf_gif_end(MsfGifState * handle) { MsfTimeFunc
     if (!handle->listHead) { MsfGifResult empty = {0}; return empty; }
-
-    MSF_GIF_FREE(handle->customAllocatorContext,
-                 handle->previousFrame.pixels, handle->width * handle->height * sizeof(uint32_t));
 
     //first pass: determine total size
     size_t total = 1; //1 byte for trailing marker
@@ -544,11 +553,7 @@ MsfGifResult msf_gif_end(MsfGifState * handle) { MsfTimeFunc
     }
 
     //third pass: free buffers
-    for (uint8_t * node = handle->listHead; node;) {
-        MsfBufferHeader * header = (MsfBufferHeader *) node;
-        node = header->next;
-        MSF_GIF_FREE(handle->customAllocatorContext, header, sizeof(MsfBufferHeader) + header->size);
-    }
+    msf_free_gif_state(handle);
 
     MsfGifResult ret = { buffer, total, total, handle->customAllocatorContext };
     return ret;
