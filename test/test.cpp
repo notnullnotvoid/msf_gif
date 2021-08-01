@@ -19,19 +19,82 @@ struct RawBlob {
     int pixels[1];
 };
 
-extern "C" {
-    void init_prefaulted_malloc();
-    void reset_prefaulted_malloc();
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+void rawframes_to_png_sequence(const char * name) {
+    RawBlob * blob = (RawBlob *) read_entire_file(dsprintf(nullptr, "in/%s.rawframes", name));
+
+    //write metadata files
+    FILE * out = fopen(dsprintf(nullptr, "in/%s/meta.txt", name), "wb");
+    assert(out);
+    fprintf(out, "%d %d %d %d", blob->width, blob->height, blob->frames, blob->centiSeconds);
+    fclose(out);
+
+    //write PNGs
+    for (int i = 0; i < blob->frames; ++i) {
+        assert(stbi_write_png(dsprintf(nullptr, "in/%s/%03d.png", name, i), blob->width, abs(blob->height), 4, &blob->pixels[blob->width * abs(blob->height) * i], 4 * blob->width));
+    }
 }
 
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#include "stb_image.h"
+
+struct Pixel { uint8_t r, g, b, a; };
+struct Image { Pixel * p; int w, h; inline Pixel * operator[] (int y) { return &p[y * w]; } };
+void png_sequence_to_rawframes(const char * name) {
+    //load metadata from metadata file
+    FILE * in = fopen(dsprintf(nullptr, "in/%s/meta.txt", name), "rb");
+    assert(in);
+    int width, height, frames, centiSeconds;
+    assert(fscanf(in, "%d %d %d %d", &width, &height, &frames, &centiSeconds) == 4);
+    fclose(in);
+
+    //write blob header
+    FILE * out = fopen(dsprintf(nullptr, "in/%s.rawframes", name), "wb");
+    assert(out);
+    assert(fwrite(&width, sizeof(int), 1, out));
+    assert(fwrite(&height, sizeof(int), 1, out));
+    assert(fwrite(&frames, sizeof(int), 1, out));
+    assert(fwrite(&centiSeconds, sizeof(int), 1, out));
+
+    //load images into memory and write to blob
+    for (int i = 0; i < frames; ++i) {
+        char * path = dsprintf(nullptr, "in/%s/f%d.png", name, i);
+        assert(file_exists(path));
+
+        //load image into memory
+        int w, h, c;
+        unsigned char * data = stbi_load(path, &w, &h, &c, 4);
+        assert(data && w == width && h == height);
+
+        //write to blob
+        assert(fwrite(data, w * h * 4, 1, out));
+    }
+    fclose(out);
+}
+
+// extern "C" {
+//     void init_prefaulted_malloc();
+//     void reset_prefaulted_malloc();
+// }
+
 int main() {
+
     const char * names[] = {
         "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "odd", "tiles",
         "anchor", "always-in-front", "flip",
-        // "sky",
+        "sky",
         // "keyhole",
     };
     // const char * names[] = { "bouncy", "diwide", "increase" };
+
+    // for (const char * name : names) {
+    //     printf("generating PNG sequence: %s\n", name); fflush(stdout);
+    //     rawframes_to_png_sequence(name);
+    // }
+    // return 0;
 
     List<RawBlob *> blobs = {};
     for (const char * name : names) {
