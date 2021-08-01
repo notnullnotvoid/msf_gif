@@ -1,6 +1,10 @@
 
+v2.2:
+- transparency support
+- include test files in repo
+- BGRA function
+
 future TODOs:
-- BGRA flag
 - more aggressive checking of invalid API arguments
 - NEON SIMD
 - API for writing pre-palettized data?
@@ -25,3 +29,28 @@ FWRITE context: new/floor.gif, handle: 0x7fff9790c030, buffer: 0x7fc39580c200, b
 FWRITE context: new/floor.gif, handle: 0x7fff9790c030, buffer: 0x7fc394010000, bytes: 14197, written: 1
 
 what's with it bouncing back and forth between high and low addresses like that?
+
+
+
+writing           new/bouncy.gif      width: 576   height: 360   frames: 417   centiSeconds: 3
+ratio: 165.437682, branch1: 519526, branch2: 85949177
+writing     new/diwide-large.gif      width: 768   height: 480   frames: 200   centiSeconds: 6
+ratio: 9.454847, branch1: 7052021, branch2: 66675779
+writing           new/diwide.gif      width: 384   height: 240   frames: 250   centiSeconds: 5
+ratio: 8.506314, branch1: 2423626, branch2: 20616124
+writing            new/floor.gif      width: 384   height: 240   frames: 247   centiSeconds: 2
+ratio: 9.024288, branch1: 2270812, branch2: 20492461
+writing         new/increase.gif      width: 576   height: 360   frames: 162   centiSeconds: 2
+ratio: 8.881415, branch1: 3399529, branch2: 30192629
+writing          new/keyhole.gif      width: 576   height: 360   frames: 299   centiSeconds: 3
+ratio: 3.742903, branch1: 13072236, branch2: 48928105
+writing              new/odd.gif      width: 381   height: 237   frames: 334   centiSeconds: 3
+ratio: 148.888246, branch1: 201209, branch2: 29957655
+writing            new/tiles.gif      width: 384   height: 240   frames: 625   centiSeconds: 2
+ratio: 20.984519, branch1: 2619997, branch2: 54979378
+writing           new/anchor.gif      width: 480   height: 320   frames: 171   centiSeconds: 4
+ratio: 35.380525, branch1: 721964, branch2: 25543465
+writing  new/always-in-front.gif      width: 480   height: 320   frames: 245   centiSeconds: 4
+ratio: 47.166797, branch1: 781280, branch2: 36850475
+writing             new/flip.gif      width: 480   height: 320   frames: 310   centiSeconds: 4
+ratio: 25.791297, branch1: 1777282, branch2: 45838408
