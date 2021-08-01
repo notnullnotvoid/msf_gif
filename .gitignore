@@ -1,5 +1,5 @@
 .DS_Store
-in/
+*.rawframes
 out/
 new/
 gif-h/
