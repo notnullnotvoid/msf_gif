@@ -526,11 +526,9 @@ int msf_gif_begin(MsfGifState * handle, int width, int height) { MsfTimeFunc
     return 1;
 }
 
-#include <assert.h>
-
 int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes)
 { MsfTimeFunc
-    if (!handle->listHead) { assert(!"first return"); return 0; }
+    if (!handle->listHead) { return 0; }
 
     maxBitDepth = msf_imax(1, msf_imin(16, maxBitDepth));
     if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
@@ -542,7 +540,7 @@ int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPer
 
     uint8_t * buffer = msf_compress_frame(handle->customAllocatorContext, handle->width, handle->height,
         centiSecondsPerFame, handle->currentFrame, handle, used, handle->lzwMem);
-    if (!buffer) { msf_free_gif_state(handle); assert("second return"); return 0; }
+    if (!buffer) { msf_free_gif_state(handle); return 0; }
     ((MsfBufferHeader *) handle->listTail)->next = buffer;
     handle->listTail = buffer;
 
