@@ -19,6 +19,11 @@ struct RawBlob {
     int pixels[1];
 };
 
+extern "C" {
+    void init_prefaulted_malloc();
+    void reset_prefaulted_malloc();
+}
+
 int main() {
     const char * names[] = {
         "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "odd", "tiles",
@@ -42,8 +47,12 @@ int main() {
     List<TimerInfo> timers = {};
     init_profiling_trace();
 
+    // init_prefaulted_malloc();
+
     //TODO: automatically regression-test against known good versions of the GIFs?
     for (int i = 0; i < blobs.len; ++i) {
+        // reset_prefaulted_malloc();
+
         RawBlob * blob = blobs[i];
         bool flipped = blob->height < 0;
         if (flipped) blob->height *= -1;

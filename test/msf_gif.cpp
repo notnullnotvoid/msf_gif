@@ -11,9 +11,9 @@ static void * dummy_realloc(void * context, void * old, int oldSize, int newSize
 	return ret;
 }
 
-#define MSF_GIF_MALLOC(contextPointer, newSize) malloc(newSize)
-#define MSF_GIF_REALLOC(contextPointer, oldMemory, oldSize, newSize) dummy_realloc(contextPointer, oldMemory, oldSize, newSize)
-#define MSF_GIF_FREE(contextPointer, oldMemory, oldSize) free(oldMemory)
+// #define MSF_GIF_MALLOC(contextPointer, newSize) malloc(newSize)
+// #define MSF_GIF_REALLOC(contextPointer, oldMemory, oldSize, newSize) dummy_realloc(contextPointer, oldMemory, oldSize, newSize)
+// #define MSF_GIF_FREE(contextPointer, oldMemory, oldSize) free(oldMemory)
 
 #define MSF_GIF_IMPL
 #if __cplusplus >= 201703L

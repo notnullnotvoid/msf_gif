@@ -2,18 +2,18 @@
 cd "$(dirname "$0")"
 
 #C++ config (w/profiling)
-# clang -march=native -std=c++17 -Wall -O2 -c msf_gif.cpp -o msf_gif.o || exit
-# clang -march=native -std=c++17 -Wall -O2 -c trace.cpp -o trace.o || exit
-# clang -march=native -std=c++17 -Wall -O2 -c test.cpp -o test.o || exit
-# clang msf_gif.o trace.o test.o -o giff -lstdc++ || exit
-# rm test.o trace.o msf_gif.o
-
-#C config (no profiling)
-clang -march=native -std=c99   -Wall -O2 -c msf_gif.c -o msf_gif.o || exit
-clang -march=native -std=c++17 -Wall -O2 -c trace.cpp -o trace.o || exit
-clang -march=native -std=c++17 -Wall -O2 -c test.cpp -o test.o || exit
+clang -march=native -std=c++17 -Wall -Os -c msf_gif.cpp -o msf_gif.o || exit
+clang -march=native -std=c++17 -Wall -Os -c trace.cpp -o trace.o || exit
+clang -march=native -std=c++17 -Wall -Os -c test.cpp -o test.o || exit
 clang msf_gif.o trace.o test.o -o giff -lstdc++ || exit
 rm test.o trace.o msf_gif.o
+
+#C config (no profiling)
+# clang -msse3 -std=c99   -Wall -Os -c msf_gif.c -o msf_gif.o || exit
+# clang -msse3 -std=c++17 -Wall -Os -c trace.cpp -o trace.o || exit
+# clang -msse3 -std=c++17 -Wall -Os -c test.cpp -o test.o || exit
+# clang msf_gif.o trace.o test.o -o giff -lstdc++ || exit
+# rm test.o trace.o msf_gif.o
 
 # clang -march=native -std=c++17 -Wall -O0 -g -c msf_gif.cpp -o msf_gif.o || exit
 # clang -march=native -std=c++17 -Wall -O0 -g -c trace.cpp -o trace.o || exit
