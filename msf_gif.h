@@ -210,7 +210,7 @@ static void msf_cook_frame(MsfCookedFrame * frame, uint8_t * raw, uint8_t * used
     int count = 0;
     MsfTimeLoop("do") do {
         int rbits = rdepths[depth], gbits = gdepths[depth], bbits = bdepths[depth];
-        int paletteSize = 1 << (rbits + gbits + bbits);
+        int paletteSize = (1 << (rbits + gbits + bbits)) + 1;
         memset(used, 0, paletteSize * sizeof(uint8_t));
 
         //TODO: document what this math does and why it's correct
@@ -245,9 +245,18 @@ static void msf_cook_frame(MsfCookedFrame * frame, uint8_t * raw, uint8_t * used
                     __m128i g2 = _mm_adds_epu16(g1, _mm_srli_epi32(k, gbits));
                     __m128i g3 = _mm_and_si128(_mm_srli_epi32(g2, 16 - rbits - gbits), _mm_set1_epi32(gmask));
 
+                    __m128i out = _mm_or_si128(_mm_or_si128(r3, g3), b3);
+
+                    #ifdef MSF_USE_ALPHA
+                        // Set transparent pixels to paletteSize - 1
+                        __m128i visible = _mm_srai_epi32(_mm_and_si128(p, _mm_set1_epi32(0x80000000)), 31);
+                        __m128i invisible = _mm_xor_si128(visible, _mm_set1_epi32(0xFFFFFFFF));
+                        out = _mm_and_si128(out, visible);
+                        out = _mm_or_si128(out, _mm_and_si128(_mm_set1_epi32(paletteSize - 1), invisible));
+                    #endif
+
                     //TODO: does storing this as a __m128i then reading it back as a uint32_t violate strict aliasing?
                     uint32_t * c = &cooked[y * width + x];
-                    __m128i out = _mm_or_si128(_mm_or_si128(r3, g3), b3);
                     _mm_storeu_si128((__m128i *) c, out);
                 }
             #endif
@@ -255,6 +264,15 @@ static void msf_cook_frame(MsfCookedFrame * frame, uint8_t * raw, uint8_t * used
             //scalar cleanup loop
             for (; x < width; ++x) {
                 uint8_t * p = &raw[y * pitch + x * 4];
+
+                #ifdef MSF_USE_ALPHA
+                    //transparent pixel if alpha is low
+                    if (p[3] < 128) {
+                        cooked[y * width + x] = paletteSize - 1;
+                        continue;
+                    }
+                #endif
+
                 int dx = x & 3, dy = y & 3;
                 int k = ditherKernel[dy * 4 + dx];
                 cooked[y * width + x] =
@@ -269,8 +287,8 @@ static void msf_cook_frame(MsfCookedFrame * frame, uint8_t * raw, uint8_t * used
             used[cooked[i]] = 1;
         }
 
-        //count used colors
-        MsfTimeLoop("count") for (int j = 0; j < paletteSize; ++j) {
+        //count used colors, transparent is ignored
+        MsfTimeLoop("count") for (int j = 0; j < paletteSize - 1; ++j) {
             count += used[j];
         }
     } while (count >= 256 && --depth);
@@ -322,7 +340,7 @@ static inline void msf_lzw_reset(MsfStridedList * lzw, int tableSize, int stride
 }
 
 static uint8_t * msf_compress_frame(void * allocContext, int width, int height, int centiSeconds,
-                                    MsfCookedFrame frame, MsfCookedFrame previous, uint8_t * used, int16_t * lzwMem)
+                                    MsfCookedFrame frame, MsfGifState * handle, uint8_t * used, int16_t * lzwMem)
 { MsfTimeFunc
     //NOTE: we reserve enough memory for theoretical the worst case upfront because it's a reasonable amount,
     //      and prevents us from ever having to check size or realloc during compression
@@ -335,14 +353,16 @@ static uint8_t * msf_compress_frame(void * allocContext, int width, int height, 
 
     //allocate tlb
     int totalBits = frame.rbits + frame.gbits + frame.bbits;
-    int tlbSize = 1 << totalBits;
-    uint8_t tlb[1 << 16]; //only 64k, so stack allocating is fine
+    int tlbSize = (1 << totalBits) + 1;
+    uint8_t tlb[(1 << 16) + 1]; //only 64k, so stack allocating is fine
 
     //generate palette
     typedef struct { uint8_t r, g, b; } Color3;
     Color3 table[256] = { {0} };
     int tableIdx = 1; //we start counting at 1 because 0 is the transparent color
-    MsfTimeLoop("table") for (int i = 0; i < tlbSize; ++i) {
+    //transparent is always last in the table
+    tlb[tlbSize-1] = 0;
+    MsfTimeLoop("table") for (int i = 0; i < tlbSize-1; ++i) {
         if (used[i]) {
             tlb[i] = tableIdx;
             int rmask = (1 << frame.rbits) - 1;
@@ -361,16 +381,24 @@ static uint8_t * msf_compress_frame(void * allocContext, int width, int height, 
             ++tableIdx;
         }
     }
+    int hasTransparentPixels = used[tlbSize-1];
 
     //SPEC: "Because of some algorithmic constraints however, black & white images which have one color bit
     //       must be indicated as having a code size of 2."
     int tableBits = msf_imax(2, msf_bit_log(tableIdx - 1));
     int tableSize = 1 << tableBits;
     //NOTE: we don't just compare `depth` field here because it will be wrong for the first frame and we will segfault
+    MsfCookedFrame previous = handle->previousFrame;
     int hasSamePal = frame.rbits == previous.rbits && frame.gbits == previous.gbits && frame.bbits == previous.bbits;
+    int framesCompatible = hasSamePal && !hasTransparentPixels;
 
     //NOTE: because __attribute__((__packed__)) is annoyingly compiler-specific, we do this unreadable weirdness
     char headerBytes[19] = "\x21\xF9\x04\x05\0\0\0\0" "\x2C\0\0\0\0\0\0\0\0\x80";
+    if (hasTransparentPixels && previous.pixels) {
+        //set the previous frame's disposal to background, so transparency is possible
+        uint8_t * previousFrameBytes = handle->listTail + sizeof(MsfBufferHeader);
+        previousFrameBytes[3] = 0x09;
+    }
     memcpy(&headerBytes[4], &centiSeconds, 2);
     memcpy(&headerBytes[13], &width, 2);
     memcpy(&headerBytes[15], &height, 2);
@@ -392,10 +420,10 @@ static uint8_t * msf_compress_frame(void * allocContext, int width, int height, 
     msf_lzw_reset(&lzw, tableSize, tableIdx);
     msf_put_code(&writeHead, &blockBits, msf_bit_log(lzw.len - 1), tableSize);
 
-    int lastCode = hasSamePal && frame.pixels[0] == previous.pixels[0]? 0 : tlb[frame.pixels[0]];
+    int lastCode = framesCompatible && frame.pixels[0] == previous.pixels[0]? 0 : tlb[frame.pixels[0]];
     MsfTimeLoop("compress") for (int i = 1; i < width * height; ++i) {
         //PERF: branching vs. branchless version of this line is observed to have no discernable impact on speed
-        int color = hasSamePal && frame.pixels[i] == previous.pixels[i]? 0 : tlb[frame.pixels[i]];
+        int color = framesCompatible && frame.pixels[i] == previous.pixels[i]? 0 : tlb[frame.pixels[i]];
         int code = (&lzw.data[lastCode * lzw.stride])[color];
         if (code < 0) {
             //write to code stream
@@ -498,21 +526,23 @@ int msf_gif_begin(MsfGifState * handle, int width, int height) { MsfTimeFunc
     return 1;
 }
 
+#include <assert.h>
+
 int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes)
 { MsfTimeFunc
-    if (!handle->listHead) { return 0; }
+    if (!handle->listHead) { assert(!"first return"); return 0; }
 
     maxBitDepth = msf_imax(1, msf_imin(16, maxBitDepth));
     if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
     if (pitchInBytes < 0) pixelData -= pitchInBytes * (handle->height - 1);
 
-    uint8_t used[1 << 16]; //only 64k, so stack allocating is fine
+    uint8_t used[(1 << 16) + 1]; //only 64k, so stack allocating is fine
     msf_cook_frame(&handle->currentFrame, pixelData, used, handle->width, handle->height, pitchInBytes,
         msf_imin(maxBitDepth, handle->previousFrame.depth + 160 / msf_imax(1, handle->previousFrame.count)));
 
     uint8_t * buffer = msf_compress_frame(handle->customAllocatorContext, handle->width, handle->height,
-        centiSecondsPerFame, handle->currentFrame, handle->previousFrame, used, handle->lzwMem);
-    if (!buffer) { msf_free_gif_state(handle); return 0; }
+        centiSecondsPerFame, handle->currentFrame, handle, used, handle->lzwMem);
+    if (!buffer) { msf_free_gif_state(handle); assert("second return"); return 0; }
     ((MsfBufferHeader *) handle->listTail)->next = buffer;
     handle->listTail = buffer;
 
