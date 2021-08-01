@@ -16,6 +16,7 @@
 // #define MSF_GIF_FREE(contextPointer, oldMemory, oldSize) free(oldMemory)
 
 #define MSF_GIF_IMPL
+#define MSF_USE_ALPHA
 #if __cplusplus >= 201703L
 #define MSF_GIF_ENABLE_TRACING
 #include "trace.hpp"

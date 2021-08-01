@@ -61,16 +61,16 @@ void png_sequence_to_rawframes(const char * name) {
 
     //load images into memory and write to blob
     for (int i = 0; i < frames; ++i) {
-        char * path = dsprintf(nullptr, "in/%s/f%d.png", name, i);
+        char * path = dsprintf(nullptr, "in/%s/%03d.png", name, i);
         assert(file_exists(path));
 
         //load image into memory
         int w, h, c;
         unsigned char * data = stbi_load(path, &w, &h, &c, 4);
-        assert(data && w == width && h == height);
+        assert(data && w == width && h == abs(height));
 
         //write to blob
-        assert(fwrite(data, w * h * 4, 1, out));
+        assert(fwrite(data, w * h * 4, 1, out)); //NOTE: important we use w,h because height can be negaitve!
     }
     fclose(out);
 }
@@ -81,20 +81,21 @@ void png_sequence_to_rawframes(const char * name) {
 // }
 
 int main() {
-
     const char * names[] = {
         "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "odd", "tiles",
         "anchor", "always-in-front", "flip",
         "sky",
+        "transparent",
         // "keyhole",
     };
     // const char * names[] = { "bouncy", "diwide", "increase" };
 
-    // for (const char * name : names) {
-    //     printf("generating PNG sequence: %s\n", name); fflush(stdout);
-    //     rawframes_to_png_sequence(name);
-    // }
-    // return 0;
+    for (const char * name : names) {
+        if (!file_exists(dsprintf(nullptr, "in/%s.rawframes", name))) {
+            printf("regenerating rawframes: %s\n", name); fflush(stdout);
+            png_sequence_to_rawframes(name);
+        }
+    }
 
     List<RawBlob *> blobs = {};
     for (const char * name : names) {
