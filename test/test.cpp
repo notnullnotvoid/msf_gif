@@ -111,6 +111,8 @@ int main() {
     List<TimerInfo> timers = {};
     init_profiling_trace();
 
+    msf_gif_alpha_threshold = 128;
+
     // init_prefaulted_malloc();
 
     //TODO: automatically regression-test against known good versions of the GIFs?

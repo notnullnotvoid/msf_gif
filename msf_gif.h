@@ -120,6 +120,8 @@ MsfGifResult msf_gif_end(MsfGifState * handle);
  */
 void msf_gif_free(MsfGifResult result);
 
+extern int msf_gif_alpha_threshold;
+
 #ifdef __cplusplus
 }
 #endif //__cplusplus
@@ -194,6 +196,8 @@ static inline int msf_imax(int a, int b) { return b < a? a : b; }
 #include <emmintrin.h>
 #endif
 
+int msf_gif_alpha_threshold = 0;
+
 static void msf_cook_frame(MsfCookedFrame * frame, uint8_t * raw, uint8_t * used,
                            int width, int height, int pitch, int depth)
 { MsfTimeFunc
@@ -250,13 +254,11 @@ static void msf_cook_frame(MsfCookedFrame * frame, uint8_t * raw, uint8_t * used
 
                     __m128i out = _mm_or_si128(_mm_or_si128(r3, g3), b3);
 
-                    #ifdef MSF_USE_ALPHA
-                        // Set transparent pixels to paletteSize - 1
-                        __m128i visible = _mm_srai_epi32(_mm_and_si128(p, _mm_set1_epi32(0x80000000)), 31);
-                        __m128i invisible = _mm_xor_si128(visible, _mm_set1_epi32(0xFFFFFFFF));
-                        out = _mm_and_si128(out, visible);
-                        out = _mm_or_si128(out, _mm_and_si128(_mm_set1_epi32(paletteSize - 1), invisible));
-                    #endif
+                    //mask in transparency based on threshold
+                    //NOTE: we can theoretically do a sub instead of srli by doing an unsigned compare via bias
+                    //      to maybe save a TINY amount of throughput? but lol who cares maybe I'll do it later -m
+                    __m128i invAlphaMask = _mm_cmplt_epi32(_mm_srli_epi32(p, 24), _mm_set1_epi32(msf_gif_alpha_threshold));
+                    out = _mm_or_si128(_mm_and_si128(invAlphaMask, _mm_set1_epi32(paletteSize - 1)), _mm_andnot_si128(invAlphaMask, out));
 
                     //TODO: does storing this as a __m128i then reading it back as a uint32_t violate strict aliasing?
                     uint32_t * c = &cooked[y * width + x];
@@ -268,13 +270,11 @@ static void msf_cook_frame(MsfCookedFrame * frame, uint8_t * raw, uint8_t * used
             for (; x < width; ++x) {
                 uint8_t * p = &raw[y * pitch + x * 4];
 
-                #ifdef MSF_USE_ALPHA
-                    //transparent pixel if alpha is low
-                    if (p[3] < 128) {
-                        cooked[y * width + x] = paletteSize - 1;
-                        continue;
-                    }
-                #endif
+                //transparent pixel if alpha is low
+                if (p[3] < msf_gif_alpha_threshold) {
+                    cooked[y * width + x] = paletteSize - 1;
+                    continue;
+                }
 
                 int dx = x & 3, dy = y & 3;
                 int k = ditherKernel[dy * 4 + dx];
