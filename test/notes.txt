@@ -2,7 +2,6 @@
 v2.2:
 . transparency support
 - BGRA function
-- error on re-implementation in a TU instead of silently doing nothing (because that could cause confusion with settings not being what's expected)
 - versions of the functions that write to a file
 
 future TODOs:

@@ -77,6 +77,7 @@ typedef struct {
     uint8_t * listTail;
     int width, height;
     void * customAllocatorContext;
+    int framesSubmitted; //needed for transparency to work correctly (because we reach into the previous frame)
 } MsfGifState;
 
 #ifdef __cplusplus
@@ -396,7 +397,9 @@ static uint8_t * msf_compress_frame(void * allocContext, int width, int height, 
 
     //NOTE: because __attribute__((__packed__)) is annoyingly compiler-specific, we do this unreadable weirdness
     char headerBytes[19] = "\x21\xF9\x04\x05\0\0\0\0" "\x2C\0\0\0\0\0\0\0\0\x80";
-    if (hasTransparentPixels && previous.pixels) {
+    //NOTE: we need to check the frame number because if we reach into the buffer prior to the first frame,
+    //      we'll just clobber the file header instead, which is a bug
+    if (hasTransparentPixels && handle->framesSubmitted > 0) {
         //set the previous frame's disposal to background, so transparency is possible
         uint8_t * previousFrameBytes = handle->listTail + sizeof(MsfBufferHeader);
         previousFrameBytes[3] = 0x09;
@@ -497,6 +500,7 @@ int msf_gif_begin(MsfGifState * handle, int width, int height) { MsfTimeFunc
     handle->currentFrame = empty;
     handle->width = width;
     handle->height = height;
+    handle->framesSubmitted = 0;
 
     //allocate memory for LZW buffer
     //NOTE: Unfortunately we can't just use stack memory for the LZW table because it's 2MB,
@@ -521,7 +525,7 @@ int msf_gif_begin(MsfGifState * handle, int width, int height) { MsfTimeFunc
     header->size = 32;
 
     //NOTE: because __attribute__((__packed__)) is annoyingly compiler-specific, we do this unreadable weirdness
-    char headerBytes[33] = "GIF89a\0\0\0\0\x10\0\0" "\x21\xFF\x0BNETSCAPE2.0\x03\x01\0\0\0";
+    char headerBytes[33] = "GIF89a\0\0\0\0\x70\0\0" "\x21\xFF\x0BNETSCAPE2.0\x03\x01\0\0\0";
     memcpy(&headerBytes[6], &width, 2);
     memcpy(&headerBytes[8], &height, 2);
     memcpy(handle->listHead + sizeof(MsfBufferHeader), headerBytes, 32);
@@ -550,6 +554,8 @@ int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPer
     MsfCookedFrame tmp = handle->previousFrame;
     handle->previousFrame = handle->currentFrame;
     handle->currentFrame = tmp;
+
+    handle->framesSubmitted += 1;
     return 1;
 }
 
