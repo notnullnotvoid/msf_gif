@@ -84,7 +84,7 @@ int main() {
     const char * names[] = {
         "bouncy", "diwide-large", "diwide", "floor", "increase", "keyhole", "odd", "tiles",
         "anchor", "always-in-front", "flip",
-        "sky",
+        // "sky",
         "transparent",
         // "keyhole",
     };
@@ -125,6 +125,8 @@ int main() {
         TimeScope(path);
         printf("writing %24s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
             path, blob->width, blob->height, blob->frames, blob->centiSeconds); fflush(stdout);
+        FILE * fp = fopen(path, "wb");
+        assert(fp);
         double pre = get_time();
         MsfGifState handle = {};
         handle.customAllocatorContext = path;
@@ -134,12 +136,18 @@ int main() {
             int pitch = flipped? -blob->width * 4 : blob->width * 4;
             assert(msf_gif_frame(&handle,
                 (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 16, pitch));
+            #if 1
+            struct MsfGifBuffer { MsfGifBuffer * next; size_t size; uint8_t data[1]; };
+            MsfGifBuffer * head = (MsfGifBuffer *) handle.listHead;
+            handle.listHead = (uint8_t *) head->next;
+            assert(fwrite(head->data, head->size, 1, fp));
+            size_t allocSize = sizeof(MsfGifBuffer *) + sizeof(size_t) + head->size;
+            msf_gif_free({ head, allocSize, allocSize, handle.customAllocatorContext });
+            #endif
         }
         MsfGifResult result = msf_gif_end(&handle);
         assert(result.data);
         timers.add({ get_time() - pre, (size_t)(blob->frames * blob->width * blob->height * 4), result.dataSize });
-        FILE * fp = fopen(path, "wb");
-        assert(fp);
         assert(fwrite(result.data, result.dataSize, 1, fp));
         fclose(fp);
         msf_gif_free(result);

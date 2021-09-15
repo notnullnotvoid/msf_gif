@@ -40,7 +40,9 @@ REPLACING MALLOC:
     before calling msf_gif_begin(), and it will be passed to all subsequent allocator macro calls.
 
     The maximum number of bytes the library will allocate to encode a single gif is bounded by the following formula:
-    `(2 * 1024 * 1024) + (width * height * 8) + ((1024 + width * height * 4.5) * frameCount)`
+    `(2 * 1024 * 1024) + (width * height * 8) + ((1024 + width * height * 1.5) * 3 * frameCount)`
+    The peak heap memory usage in bytes, if using a general-purpose heap allocator, is bounded by the following formula:
+    `(2 * 1024 * 1024) + (width * height * 9.5) + 1024 + (16 * frameCount) + (2 * sizeOfResultingGif)
 
 
 See end of file for license information.
