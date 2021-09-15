@@ -31,6 +31,7 @@ Everywhere else, just include the header like normal.
 ```cpp
 int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
 MsfGifState gifState = {};
+// msf_gif_alpha_threshold = 128; //optionally, enable transparency (see documentation in header for details)
 msf_gif_begin(&gifState, width, height);
 msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 1
 msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 2

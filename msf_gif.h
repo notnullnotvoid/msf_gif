@@ -13,6 +13,7 @@ USAGE EXAMPLE:
 
     int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
     MsfGifState gifState = {};
+    // msf_gif_alpha_threshold = 128; //optionally, enable transparency (see function documentation below for details)
     msf_gif_begin(&gifState, width, height);
     msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 1
     msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 2
@@ -120,6 +121,10 @@ MsfGifResult msf_gif_end(MsfGifState * handle);
  */
 void msf_gif_free(MsfGifResult result);
 
+//The gif format only supports 1-bit transparency, meaning a pixel will either be fully transparent or fully opaque.
+//Pixels with an alpha value less than the alpha threshold will be treated as transparent.
+//To enable exporting transparent gifs, set it to a value between 1 and 255 (inclusive) before calling msf_gif_frame().
+//Setting it to 0 causes the alpha channel to be ignored. Its initial value is 0.
 extern int msf_gif_alpha_threshold;
 
 #ifdef __cplusplus

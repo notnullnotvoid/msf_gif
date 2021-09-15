@@ -1,6 +1,5 @@
 
 v2.2:
-. transparency support
 - BGRA function
 - versions of the functions that write to a file
 
