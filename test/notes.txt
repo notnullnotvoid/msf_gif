@@ -1,8 +1,9 @@
 
 v2.2:
-- versions of the functions that write to a file
+- cleanup/simplify MsfGifBuffer/MsfBufferHeader nonsense
 
 future TODOs:
+- more efficient/less hacky to-file API
 - more aggressive checking of invalid API arguments
 - NEON SIMD
 - API for writing pre-palettized data?

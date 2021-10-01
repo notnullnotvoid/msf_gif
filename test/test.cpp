@@ -123,8 +123,13 @@ int main() {
         bool flipped = blob->height < 0;
         if (flipped) blob->height *= -1;
 
-        bool test_bgra = true;
-        msf_gif_bgra_flag = test_bgra;
+        msf_gif_bgra_flag = true;
+        if (msf_gif_bgra_flag) {
+            for (int i = 0; i < blob->width * blob->height * blob->frames; ++i) {
+                Pixel * p = (Pixel *) &blob->pixels[i];
+                swap(p->r, p->b);
+            }
+        }
 
         char * path = dsprintf(nullptr, "new/%s.gif", names[i]);
         TimeScope(path);
@@ -135,26 +140,12 @@ int main() {
         double pre = get_time();
         MsfGifState handle = {};
         handle.customAllocatorContext = path;
+        #if 1 //to-memory
         assert(msf_gif_begin(&handle, blob->width, blob->height));
         for (int j = 0; j < blob->frames; ++j) {
-            // handle.customAllocatorContext = dsprintf(nullptr, "%s frame %d", path, j);
             int pitch = flipped? -blob->width * 4 : blob->width * 4;
-            if (test_bgra) {
-                for (int i = 0; i < blob->width * blob->height; ++i) {
-                    Pixel * p = (Pixel *) &blob->pixels[blob->width * blob->height * j + i];
-                    swap(p->r, p->b);
-                }
-            }
             assert(msf_gif_frame(&handle,
                 (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 16, pitch));
-            #if 0
-            struct MsfGifBuffer { MsfGifBuffer * next; size_t size; uint8_t data[1]; };
-            MsfGifBuffer * head = (MsfGifBuffer *) handle.listHead;
-            handle.listHead = (uint8_t *) head->next;
-            assert(fwrite(head->data, head->size, 1, fp));
-            size_t allocSize = sizeof(MsfGifBuffer *) + sizeof(size_t) + head->size;
-            msf_gif_free({ head, allocSize, allocSize, handle.customAllocatorContext });
-            #endif
         }
         MsfGifResult result = msf_gif_end(&handle);
         assert(result.data);
@@ -162,6 +153,16 @@ int main() {
         assert(fwrite(result.data, result.dataSize, 1, fp));
         fclose(fp);
         msf_gif_free(result);
+        #else //to-file
+        assert(msf_gif_begin_to_file(&handle, blob->width, blob->height, (MsfGifFileWriteFunc) fwrite, (void *) fp));
+        for (int j = 0; j < blob->frames; ++j) {
+            int pitch = flipped? -blob->width * 4 : blob->width * 4;
+            assert(msf_gif_frame_to_file(&handle,
+                (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 16, pitch));
+        }
+        assert(msf_gif_end_to_file(&handle));
+        fclose(fp);
+        #endif
     }
 
     printf("\n");

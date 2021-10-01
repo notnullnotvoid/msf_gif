@@ -71,7 +71,10 @@ typedef struct { //internal use
     int depth, count, rbits, gbits, bbits;
 } MsfCookedFrame;
 
+typedef size_t (* MsfGifFileWriteFunc) (const void * buffer, size_t size, size_t count, void * stream);
 typedef struct {
+    MsfGifFileWriteFunc fileWriteFunc;
+    void * fileWriteData;
     MsfCookedFrame previousFrame;
     MsfCookedFrame currentFrame;
     int16_t * lzwMem;
@@ -131,6 +134,24 @@ extern int msf_gif_alpha_threshold;
 
 //Set `msf_gif_bgra_flag = true` before calling `msf_gif_frame()` if your pixels are in BGRA byte order instead of RBGA.
 extern int msf_gif_bgra_flag;
+
+
+
+//These functions are equivalent to the ones above, but they write results to a file incrementally,
+//instead of building a buffer in memory. This can result in lower memory usage when saving large gifs.
+//There is currently no reason to use these unless you are on a memory-constrained platform.
+//If in doubt about which API to use, for now you should use the normal (non-file) functions above.
+//The signature of MsfGifFileWriteFunc matches fwrite for convenience, so that you can use the C file API like so:
+//  FILE * fp = fopen("MyGif.gif", "wb");
+//  msf_gif_begin_to_file(&state, width, height, (MsfGifFileWriteFunc) fwrite, (void *) fp);
+//  msf_gif_frame_to_file(...)
+//  msf_gif_end_to_file(&handle);
+//  fclose(fp);
+//If you use a custom file write function, you must take care to return the same values that fwrite() would return.
+//Note that all three functions will potentially write to the file.
+int msf_gif_begin_to_file(MsfGifState * handle, int width, int height, MsfGifFileWriteFunc func, void * filePointer);
+int msf_gif_frame_to_file(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes);
+int msf_gif_end_to_file(MsfGifState * handle); //returns 0 on error and non-zero on success
 
 #ifdef __cplusplus
 }
@@ -493,7 +514,7 @@ static uint8_t * msf_compress_frame(void * allocContext, int width, int height, 
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// Incremental API                                                                                                  ///
+/// To-memory API                                                                                                    ///
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static const int lzwAllocSize = 4096 * 256 * sizeof(int16_t);
@@ -615,6 +636,36 @@ void msf_gif_free(MsfGifResult result) { MsfTimeFunc
     if (result.data) { MSF_GIF_FREE(result.contextPointer, result.data, result.allocSize); }
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// To-file API                                                                                                      ///
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+int msf_gif_begin_to_file(MsfGifState * handle, int width, int height, MsfGifFileWriteFunc func, void * filePointer) {
+    handle->fileWriteFunc = func;
+    handle->fileWriteData = filePointer;
+    return msf_gif_begin(handle, width, height);
+}
+
+int msf_gif_frame_to_file(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes) {
+    if (!msf_gif_frame(handle, pixelData, centiSecondsPerFame, maxBitDepth, pitchInBytes)) { return 0; }
+
+    //NOTE: this is a somewhat hacky implementation which is not perfectly efficient, but it's good enough for now
+    struct MsfGifBuffer { MsfGifBuffer * next; size_t size; uint8_t data[1]; };
+    MsfGifBuffer * head = (MsfGifBuffer *) handle->listHead;
+    handle->listHead = (uint8_t *) head->next;
+    if (!handle->fileWriteFunc(head->data, head->size, 1, handle->fileWriteData)) { msf_free_gif_state(handle); return 0; }
+    MSF_GIF_FREE(handle->customAllocatorContext, head, sizeof(MsfGifBuffer *) + sizeof(size_t) + head->size);
+    return 1;
+}
+
+int msf_gif_end_to_file(MsfGifState * handle) {
+    //NOTE: this is a somewhat hacky implementation which is not perfectly efficient, but it's good enough for now
+    MsfGifResult result = msf_gif_end(handle);
+    int ret = handle->fileWriteFunc(result.data, result.dataSize, 1, handle->fileWriteData);
+    msf_gif_free(result);
+    return ret;
+}
+
 #endif //MSF_GIF_ALREADY_IMPLEMENTED_IN_THIS_TRANSLATION_UNIT
 #endif //MSF_GIF_IMPL
 
@@ -623,7 +674,7 @@ void msf_gif_free(MsfGifResult result) { MsfTimeFunc
 This software is available under 2 licenses -- choose whichever you prefer.
 ------------------------------------------------------------------------------
 ALTERNATIVE A - MIT License
-Copyright (c) 2020 Miles Fogle
+Copyright (c) 2021 Miles Fogle
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
 the Software without restriction, including without limitation the rights to
