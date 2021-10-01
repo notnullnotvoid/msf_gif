@@ -13,6 +13,7 @@ USAGE EXAMPLE:
 
     int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
     MsfGifState gifState = {};
+    // msf_gif_bgra_flag = true; //optionally, set this flag if your pixels are in BGRA format instead of RGBA
     // msf_gif_alpha_threshold = 128; //optionally, enable transparency (see function documentation below for details)
     msf_gif_begin(&gifState, width, height);
     msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 1
@@ -93,7 +94,8 @@ extern "C" {
 int msf_gif_begin(MsfGifState * handle, int width, int height);
 
 /**
- * @param pixelData            Pointer to raw framebuffer data. Rows must be contiguous in memory, in RGBA8 format.
+ * @param pixelData            Pointer to raw framebuffer data. Rows must be contiguous in memory, in RGBA8 format
+ *                             (or BGRA8 if you have set `msf_gif_bgra_flag = true`).
  *                             Note: This function does NOT free `pixelData`. You must free it yourself afterwards.
  * @param centiSecondsPerFrame How many hundredths of a second this frame should be displayed for.
  *                             Note: This being specified in centiseconds is a limitation of the GIF format.
@@ -126,6 +128,9 @@ void msf_gif_free(MsfGifResult result);
 //To enable exporting transparent gifs, set it to a value between 1 and 255 (inclusive) before calling msf_gif_frame().
 //Setting it to 0 causes the alpha channel to be ignored. Its initial value is 0.
 extern int msf_gif_alpha_threshold;
+
+//Set `msf_gif_bgra_flag = true` before calling `msf_gif_frame()` if your pixels are in BGRA byte order instead of RBGA.
+extern int msf_gif_bgra_flag;
 
 #ifdef __cplusplus
 }
@@ -202,14 +207,20 @@ static inline int msf_imax(int a, int b) { return b < a? a : b; }
 #endif
 
 int msf_gif_alpha_threshold = 0;
+int msf_gif_bgra_flag = 0;
 
 static void msf_cook_frame(MsfCookedFrame * frame, uint8_t * raw, uint8_t * used,
                            int width, int height, int pitch, int depth)
 { MsfTimeFunc
     //bit depth for each channel
-    const static int rdepths[17] = { 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5 };
-    const static int gdepths[17] = { 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6 };
-    const static int bdepths[17] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5 };
+    const static int rdepthsArray[17] = { 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5 };
+    const static int gdepthsArray[17] = { 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6 };
+    const static int bdepthsArray[17] = { 0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5 };
+    //this extra level of indirection looks unnecessary but we need to explicitly decay the arrays to pointers
+    //in order to be able to swap them because of C's annoying not-quite-pointers, not-quite-value-types stack arrays.
+    const int * rdepths = msf_gif_bgra_flag? bdepthsArray : rdepthsArray;
+    const int * gdepths =                                   gdepthsArray;
+    const int * bdepths = msf_gif_bgra_flag? rdepthsArray : bdepthsArray;
 
     const static int ditherKernel[16] = {
          0 << 12,  8 << 12,  2 << 12, 10 << 12,
@@ -386,6 +397,11 @@ static uint8_t * msf_compress_frame(void * allocContext, int width, int height, 
             table[tableIdx].r = r | r >> frame.rbits | r >> (frame.rbits * 2) | r >> (frame.rbits * 3);
             table[tableIdx].g = g | g >> frame.gbits | g >> (frame.gbits * 2) | g >> (frame.gbits * 3);
             table[tableIdx].b = b | b >> frame.bbits | b >> (frame.bbits * 2) | b >> (frame.bbits * 3);
+            if (msf_gif_bgra_flag) {
+                uint8_t temp = table[tableIdx].r;
+                table[tableIdx].r = table[tableIdx].b;
+                table[tableIdx].b = temp;
+            }
             ++tableIdx;
         }
     }

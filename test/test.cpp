@@ -123,6 +123,9 @@ int main() {
         bool flipped = blob->height < 0;
         if (flipped) blob->height *= -1;
 
+        bool test_bgra = true;
+        msf_gif_bgra_flag = test_bgra;
+
         char * path = dsprintf(nullptr, "new/%s.gif", names[i]);
         TimeScope(path);
         printf("writing %24s      width: %d   height: %d   frames: %d   centiSeconds: %d\n",
@@ -136,9 +139,15 @@ int main() {
         for (int j = 0; j < blob->frames; ++j) {
             // handle.customAllocatorContext = dsprintf(nullptr, "%s frame %d", path, j);
             int pitch = flipped? -blob->width * 4 : blob->width * 4;
+            if (test_bgra) {
+                for (int i = 0; i < blob->width * blob->height; ++i) {
+                    Pixel * p = (Pixel *) &blob->pixels[blob->width * blob->height * j + i];
+                    swap(p->r, p->b);
+                }
+            }
             assert(msf_gif_frame(&handle,
                 (uint8_t *) &blob->pixels[blob->width * blob->height * j], blob->centiSeconds, 16, pitch));
-            #if 1
+            #if 0
             struct MsfGifBuffer { MsfGifBuffer * next; size_t size; uint8_t data[1]; };
             MsfGifBuffer * head = (MsfGifBuffer *) handle.listHead;
             handle.listHead = (uint8_t *) head->next;
