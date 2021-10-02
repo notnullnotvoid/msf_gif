@@ -15,7 +15,7 @@ A single-header animated GIF exporter, suitable for recording gifs in realtime.
 ![Side-by-side comparison: MSF half](examples/keyhole-msf-2x.gif)
 ![Side-by-side comparison: JO half](examples/keyhole-jo-2x.gif)
 
-Above: a side-by-side comparisons of different color quantization algorithms dealing with a difficult area of an animation. On the left is the constant-quality algorithm used by msf_gif. On the right is an adaptive algorithm with a random dither. The adaptive algorithm struggles to give sufficient quality to the tomato because it's a small portion of the image and therefore gets only a small portion of the color palette.
+Above: a side-by-side comparisons of different color quantization algorithms dealing with a difficult area of an animation. On the left is the constant-quality algorithm used by msf_gif. On the right is an adaptive algorithm with a random dither. The adaptive algorithm struggles to give sufficient quality to the tomato because it's a small portion of the image and therefore gets only a small portion of the color palette. The adaptive algorithm also takes longer to encode, and results in a larger file.
 
 ## How to use
 
@@ -38,9 +38,11 @@ msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //fram
 msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 2
 msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 3, etc...
 MsfGifResult result = msf_gif_end(&gifState);
-FILE * fp = fopen("MyGif.gif", "wb");
-fwrite(result.data, result.dataSize, 1, fp);
-fclose(fp);
+if (result.data) {
+    FILE * fp = fopen("MyGif.gif", "wb");
+    fwrite(result.data, result.dataSize, 1, fp);
+    fclose(fp);
+}
 msf_gif_free(result);
 ```
 Detailed function documentation can be found in the header.

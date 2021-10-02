@@ -20,12 +20,22 @@ USAGE EXAMPLE:
     msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 2
     msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 3, etc...
     MsfGifResult result = msf_gif_end(&gifState);
-    FILE * fp = fopen("MyGif.gif", "wb");
-    fwrite(result.data, result.dataSize, 1, fp);
-    fclose(fp);
+    if (result.data) {
+        FILE * fp = fopen("MyGif.gif", "wb");
+        fwrite(result.data, result.dataSize, 1, fp);
+        fclose(fp);
+    }
     msf_gif_free(result);
 
 Detailed function documentation can be found in the header section below.
+
+
+ERROR HANDLING:
+
+    If memory allocation fails, the functions will signal the error via their return values.
+    If one function call fails, the library will free all of its allocations,
+    and all subsequent calls will safely no-op and return 0 until the next call to `msf_gif_begin()`.
+    Therefore, it's safe to check only the return value of `msf_gif_end()`.
 
 
 REPLACING MALLOC:
@@ -51,6 +61,10 @@ See end of file for license information.
 */
 
 //version 2.2
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// HEADER                                                                                                           ///
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #ifndef MSF_GIF_H
 #define MSF_GIF_H
