@@ -140,7 +140,7 @@ int main() {
         double pre = get_time();
         MsfGifState handle = {};
         handle.customAllocatorContext = path;
-        #if 1 //to-memory
+        #if 0 //to-memory
         assert(msf_gif_begin(&handle, blob->width, blob->height));
         for (int j = 0; j < blob->frames; ++j) {
             int pitch = flipped? -blob->width * 4 : blob->width * 4;
