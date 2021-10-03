@@ -157,8 +157,10 @@ extern int msf_gif_bgra_flag;
 
 
 
+//TO-FILE FUNCTIONS
 //These functions are equivalent to the ones above, but they write results to a file incrementally,
-//instead of building a buffer in memory. This can result in lower memory usage when saving large gifs.
+//instead of building a buffer in memory. This can result in lower memory usage when saving large gifs,
+//because memory usage is bounded by only the size of a single frame, and is not dependent on the number of frames.
 //There is currently no reason to use these unless you are on a memory-constrained platform.
 //If in doubt about which API to use, for now you should use the normal (non-file) functions above.
 //The signature of MsfGifFileWriteFunc matches fwrite for convenience, so that you can use the C file API like so:
@@ -664,7 +666,7 @@ int msf_gif_frame_to_file(MsfGifState * handle, uint8_t * pixelData, int centiSe
 int msf_gif_end_to_file(MsfGifState * handle) {
     //NOTE: this is a somewhat hacky implementation which is not perfectly efficient, but it's good enough for now
     MsfGifResult result = msf_gif_end(handle);
-    int ret = handle->fileWriteFunc(result.data, result.dataSize, 1, handle->fileWriteData);
+    int ret = (int) handle->fileWriteFunc(result.data, result.dataSize, 1, handle->fileWriteData);
     msf_gif_free(result);
     return ret;
 }

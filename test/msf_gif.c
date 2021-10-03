@@ -3,19 +3,19 @@
 #include <stdlib.h>
 
 #if 1
-static void * dummy_malloc(void * context, int newSize) {
+static void * dummy_malloc(void * context, size_t newSize) {
 	void * ret = malloc(newSize);
 	// printf("MALLOC context: %s, newSize: %d, new: %p\n", context, newSize, ret);
 	return ret;
 }
 
-static void * dummy_realloc(void * context, void * old, int oldSize, int newSize) {
+static void * dummy_realloc(void * context, void * old, size_t oldSize, size_t newSize) {
 	void * ret = realloc(old, newSize);
 	// printf("REALLOC context: %s, old: %p, oldSize: %d, newSize: %d, new: %p\n", context, old, oldSize, newSize, ret);
 	return ret;
 }
 
-static void dummy_free(void * context, void * old, int oldSize) {
+static void dummy_free(void * context, void * old, size_t oldSize) {
 	// printf("FREE context: %s, old: %p, oldSize: %d\n", context, old, oldSize);
 	free(old);
 }
