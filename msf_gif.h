@@ -657,8 +657,8 @@ int msf_gif_frame_to_file(MsfGifState * handle, uint8_t * pixelData, int centiSe
 
     //NOTE: this is a somewhat hacky implementation which is not perfectly efficient, but it's good enough for now
     MsfGifBuffer * head = handle->listHead;
-    handle->listHead = head->next;
     if (!handle->fileWriteFunc(head->data, head->size, 1, handle->fileWriteData)) { msf_free_gif_state(handle); return 0; }
+    handle->listHead = head->next;
     MSF_GIF_FREE(handle->customAllocatorContext, head, offsetof(MsfGifBuffer, data) + head->size);
     return 1;
 }
