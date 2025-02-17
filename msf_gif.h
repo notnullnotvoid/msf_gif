@@ -11,14 +11,14 @@ HOW TO USE:
 
 USAGE EXAMPLE:
 
-    int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
+    int width = 480, height = 320, centisecondsPerFrame = 5, quality = 16;
     MsfGifState gifState = {};
     // msf_gif_bgra_flag = true; //optionally, set this flag if your pixels are in BGRA format instead of RGBA
     // msf_gif_alpha_threshold = 128; //optionally, enable transparency (see function documentation below for details)
     msf_gif_begin(&gifState, width, height);
-    msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 1
-    msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 2
-    msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 3, etc...
+    msf_gif_frame(&gifState, ..., centisecondsPerFrame, quality, width * 4); //frame 1
+    msf_gif_frame(&gifState, ..., centisecondsPerFrame, quality, width * 4); //frame 2
+    msf_gif_frame(&gifState, ..., centisecondsPerFrame, quality, width * 4); //frame 3, etc...
     MsfGifResult result = msf_gif_end(&gifState);
     if (result.data) {
         FILE * fp = fopen("MyGif.gif", "wb");
@@ -122,18 +122,16 @@ int msf_gif_begin(MsfGifState * handle, int width, int height);
  *                             Note: This function does NOT free `pixelData`. You must free it yourself afterwards.
  * @param centiSecondsPerFrame How many hundredths of a second this frame should be displayed for.
  *                             Note: This being specified in centiseconds is a limitation of the GIF format.
- * @param maxBitDepth          Limits how many bits per pixel can be used when quantizing the gif.
- *                             The actual bit depth chosen for a given frame will be less than or equal to
- *                             the supplied maximum, depending on the variety of colors used in the frame.
- *                             `maxBitDepth` will be clamped between 1 and 16. The recommended default is 16.
- *                             Lowering this value can result in faster exports and smaller gifs,
- *                             but the quality may suffer.
- *                             Please experiment with this value to find what works best for your application.
+ * @param quality              This parameter limits the maximum color accuracy for quantization.
+ *                             Actual color accuracy varies dynamically based on how many colors are used in the frame.
+ *                             `quality` is clamped between 1 and 16. The recommended default is 16.
+ *                             Lowering this value can result in smaller gifs and slightly faster exports,
+ *                             but the resulting gifs may look noticeably worse with a more extreme dither pattern.
  * @param pitchInBytes         The number of bytes from the beginning of one row of pixels to the beginning of the next.
  *                             If you want to flip the image, just pass in a negative pitch.
  * @return                     Non-zero on success, 0 on error.
  */
-int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes);
+int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFrame, int quality, int pitchInBytes);
 
 /**
  * @return                     A block of memory containing the gif file data, or NULL on error.
@@ -172,7 +170,7 @@ extern int msf_gif_bgra_flag;
 //If you use a custom file write function, you must take care to return the same values that fwrite() would return.
 //Note that all three functions will potentially write to the file.
 int msf_gif_begin_to_file(MsfGifState * handle, int width, int height, MsfGifFileWriteFunc func, void * filePointer);
-int msf_gif_frame_to_file(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes);
+int msf_gif_frame_to_file(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFrame, int quality, int pitchInBytes);
 int msf_gif_end_to_file(MsfGifState * handle); //returns 0 on error and non-zero on success
 
 #ifdef __cplusplus
@@ -586,20 +584,20 @@ int msf_gif_begin(MsfGifState * handle, int width, int height) { MsfTimeFunc
     return 1;
 }
 
-int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes)
+int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFrame, int quality, int pitchInBytes)
 { MsfTimeFunc
     if (!handle->listHead) { return 0; }
 
-    maxBitDepth = msf_imax(1, msf_imin(16, maxBitDepth));
+    quality = msf_imax(1, msf_imin(16, quality));
     if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
     if (pitchInBytes < 0) pixelData -= pitchInBytes * (handle->height - 1);
 
     uint8_t used[(1 << 16) + 1]; //only 64k, so stack allocating is fine
     msf_cook_frame(&handle->currentFrame, pixelData, used, handle->width, handle->height, pitchInBytes,
-        msf_imin(maxBitDepth, handle->previousFrame.depth + 160 / msf_imax(1, handle->previousFrame.count)));
+        msf_imin(quality, handle->previousFrame.depth + 160 / msf_imax(1, handle->previousFrame.count)));
 
     MsfGifBuffer * buffer = msf_compress_frame(handle->customAllocatorContext, handle->width, handle->height,
-        centiSecondsPerFame, handle->currentFrame, handle, used, handle->lzwMem);
+        centiSecondsPerFrame, handle->currentFrame, handle, used, handle->lzwMem);
     if (!buffer) { msf_free_gif_state(handle); return 0; }
     handle->listTail->next = buffer;
     handle->listTail = buffer;
@@ -652,8 +650,8 @@ int msf_gif_begin_to_file(MsfGifState * handle, int width, int height, MsfGifFil
     return msf_gif_begin(handle, width, height);
 }
 
-int msf_gif_frame_to_file(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFame, int maxBitDepth, int pitchInBytes) {
-    if (!msf_gif_frame(handle, pixelData, centiSecondsPerFame, maxBitDepth, pitchInBytes)) { return 0; }
+int msf_gif_frame_to_file(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFrame, int quality, int pitchInBytes) {
+    if (!msf_gif_frame(handle, pixelData, centiSecondsPerFrame, quality, pitchInBytes)) { return 0; }
 
     //NOTE: this is a somewhat hacky implementation which is not perfectly efficient, but it's good enough for now
     MsfGifBuffer * head = handle->listHead;

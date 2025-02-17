@@ -29,14 +29,14 @@ Everywhere else, just include the header like normal.
 ### Usage example
 
 ```cpp
-int width = 480, height = 320, centisecondsPerFrame = 5, bitDepth = 16;
+int width = 480, height = 320, centisecondsPerFrame = 5, quality = 16;
 MsfGifState gifState = {};
 // msf_gif_bgra_flag = true; //optionally, set this flag if your pixels are in BGRA format instead of RGBA
 // msf_gif_alpha_threshold = 128; //optionally, enable transparency (see documentation in header for details)
 msf_gif_begin(&gifState, width, height);
-msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 1
-msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 2
-msf_gif_frame(&gifState, ..., centisecondsPerFrame, bitDepth, width * 4); //frame 3, etc...
+msf_gif_frame(&gifState, ..., centisecondsPerFrame, quality, width * 4); //frame 1
+msf_gif_frame(&gifState, ..., centisecondsPerFrame, quality, width * 4); //frame 2
+msf_gif_frame(&gifState, ..., centisecondsPerFrame, quality, width * 4); //frame 3, etc...
 MsfGifResult result = msf_gif_end(&gifState);
 if (result.data) {
     FILE * fp = fopen("MyGif.gif", "wb");
