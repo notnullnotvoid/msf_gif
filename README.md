@@ -50,6 +50,10 @@ Detailed function documentation can be found in the header.
 ### A note on image resizing
 
 If the data source you're making a gif from is high-resolution, the resulting gif may be prohibitively large and take a long time to export. To make a gif with a smaller resolution, you have a few options:
-1. The best option, if capturing a gif directly from a game or other application, is to render the scene a second time to a smaller-resolution texture. This is what I do, but it can be tricky to set up, and could be expensive depending on the scene.
-2. The second-best option is to render to a texture and downscale on the GPU. This can be surprisingly tricky to get right, and quality may suffer. You can do your own higher-quality resampling in a compute shader or fragment shader, but that's more difficult.
-3. The third-best option, and the easiest, is to downscale on the CPU. For this you can use [stb_image_resize.h](https://github.com/nothings/stb/blob/master/stb_image_resize.h), which provides high-quality results, but can be very slow. I'm currently looking into creating a much faster alternative. Watch this space!
+1. A good option, if capturing a gif directly from a game or other application, is to render the scene a second time to a smaller-resolution texture. However, it can be tricky to set up, and could be expensive depending on the scene.
+2. Another option is to render to a texture and downscale on the GPU. This can be tricky to get right, and quality may suffer. You can do your own higher-quality resampling in a compute shader or fragment shader, but that's more difficult.
+3. The easiest option is to downscale on the CPU. For this you can use [stb_image_resize2.h](https://github.com/nothings/stb/blob/master/stb_image_resize2.h), which provides high-quality results, but can be slow.
+
+### Contributing
+
+The code and data that I use for testing and benchmarking the library can be found in a separate repository at https://github.com/notnullnotvoid/msf_gif-testing. Feel free to use this if you want to test changes to the library.
