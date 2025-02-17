@@ -85,19 +85,21 @@ typedef struct { //internal use
     int depth, count, rbits, gbits, bbits;
 } MsfCookedFrame;
 
-typedef struct MsfGifBuffer {
+typedef struct MsfGifBuffer { //internal use
     struct MsfGifBuffer * next;
     size_t size;
     uint8_t data[1];
 } MsfGifBuffer;
 
 typedef size_t (* MsfGifFileWriteFunc) (const void * buffer, size_t size, size_t count, void * stream);
-typedef struct {
+typedef struct { //internal use
     MsfGifFileWriteFunc fileWriteFunc;
     void * fileWriteData;
     MsfCookedFrame previousFrame;
     MsfCookedFrame currentFrame;
     int16_t * lzwMem;
+    uint8_t * tlbMem;
+    uint8_t * usedMem;
     MsfGifBuffer * listHead;
     MsfGifBuffer * listTail;
     int width, height;
@@ -394,7 +396,7 @@ static inline void msf_lzw_reset(MsfStridedList * lzw, int tableSize, int stride
 }
 
 static MsfGifBuffer * msf_compress_frame(void * allocContext, int width, int height, int centiSeconds,
-                                         MsfCookedFrame frame, MsfGifState * handle, uint8_t * used, int16_t * lzwMem)
+                                         MsfCookedFrame frame, MsfGifState * handle, uint8_t * used, uint8_t * tlb, int16_t * lzwMem)
 { MsfTimeFunc
     //NOTE: we reserve enough memory for theoretical the worst case upfront because it's a reasonable amount,
     //      and prevents us from ever having to check size or realloc during compression
@@ -407,7 +409,6 @@ static MsfGifBuffer * msf_compress_frame(void * allocContext, int width, int hei
     //allocate tlb
     int totalBits = frame.rbits + frame.gbits + frame.bbits;
     int tlbSize = (1 << totalBits) + 1;
-    uint8_t tlb[(1 << 16) + 1]; //only 64k, so stack allocating is fine
 
     //generate palette
     typedef struct { uint8_t r, g, b; } Color3;
@@ -529,6 +530,8 @@ static MsfGifBuffer * msf_compress_frame(void * allocContext, int width, int hei
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static const int lzwAllocSize = 4096 * 256 * sizeof(int16_t);
+static const int tlbAllocSize = ((1 << 16) + 1) * sizeof(uint8_t);
+static const int usedAllocSize = ((1 << 16) + 1) * sizeof(uint8_t);
 
 //NOTE: by C standard library conventions, freeing NULL should be a no-op,
 //      but just in case the user's custom free doesn't follow that rule, we do null checks on our end as well.
@@ -538,6 +541,8 @@ static void msf_free_gif_state(MsfGifState * handle) {
     if (handle->currentFrame.pixels)  MSF_GIF_FREE(handle->customAllocatorContext, handle->currentFrame.pixels,
                                                    handle->width * handle->height * sizeof(uint32_t));
     if (handle->lzwMem) MSF_GIF_FREE(handle->customAllocatorContext, handle->lzwMem, lzwAllocSize);
+    if (handle->tlbMem) MSF_GIF_FREE(handle->customAllocatorContext, handle->tlbMem, tlbAllocSize);
+    if (handle->usedMem) MSF_GIF_FREE(handle->customAllocatorContext, handle->usedMem, usedAllocSize);
     for (MsfGifBuffer * node = handle->listHead; node;) {
         MsfGifBuffer * next = node->next; //NOTE: we have to copy the `next` pointer BEFORE freeing the node holding it
         MSF_GIF_FREE(handle->customAllocatorContext, node, offsetof(MsfGifBuffer, data) + node->size);
@@ -555,12 +560,13 @@ int msf_gif_begin(MsfGifState * handle, int width, int height) { MsfTimeFunc
     handle->height = height;
     handle->framesSubmitted = 0;
 
-    //allocate memory for LZW buffer
-    //NOTE: Unfortunately we can't just use stack memory for the LZW table because it's 2MB,
-    //      which is more stack space than most operating systems give by default,
-    //      and we can't realistically expect users to be willing to override that just to use our library,
-    //      so we have to allocate this on the heap.
+    //NOTE: Default stack sizes for some platforms are very small. Emscripten in particular uses a 64k stack by default.
+    //      So anything that large or larger must be allocated on the heap, even if its maximum size is compile-time known.
+    //      The lzw, tlb, and used arrays are 2MB, 64KB, and 64KB respectively, so we allocate them here.
+    //      We could make them arrays at global scope, but that would create problems if the library is used from multiple threads.
     handle->lzwMem = (int16_t *) MSF_GIF_MALLOC(handle->customAllocatorContext, lzwAllocSize);
+    handle->tlbMem = (uint8_t *) MSF_GIF_MALLOC(handle->customAllocatorContext, tlbAllocSize);
+    handle->usedMem = (uint8_t *) MSF_GIF_MALLOC(handle->customAllocatorContext, usedAllocSize);
     handle->previousFrame.pixels =
         (uint32_t *) MSF_GIF_MALLOC(handle->customAllocatorContext, handle->width * handle->height * sizeof(uint32_t));
     handle->currentFrame.pixels =
@@ -592,12 +598,11 @@ int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPer
     if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
     if (pitchInBytes < 0) pixelData -= pitchInBytes * (handle->height - 1);
 
-    uint8_t used[(1 << 16) + 1]; //only 64k, so stack allocating is fine
-    msf_cook_frame(&handle->currentFrame, pixelData, used, handle->width, handle->height, pitchInBytes,
+    msf_cook_frame(&handle->currentFrame, pixelData, handle->usedMem, handle->width, handle->height, pitchInBytes,
         msf_imin(quality, handle->previousFrame.depth + 160 / msf_imax(1, handle->previousFrame.count)));
 
     MsfGifBuffer * buffer = msf_compress_frame(handle->customAllocatorContext, handle->width, handle->height,
-        centiSecondsPerFrame, handle->currentFrame, handle, used, handle->lzwMem);
+        centiSecondsPerFrame, handle->currentFrame, handle, handle->usedMem, handle->tlbMem, handle->lzwMem);
     if (!buffer) { msf_free_gif_state(handle); return 0; }
     handle->listTail->next = buffer;
     handle->listTail = buffer;
