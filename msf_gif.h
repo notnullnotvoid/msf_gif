@@ -52,15 +52,15 @@ REPLACING MALLOC:
     before calling msf_gif_begin(), and it will be passed to all subsequent allocator macro calls.
 
     The maximum number of bytes the library will allocate to encode a single gif is bounded by the following formula:
-    `(2 * 1024 * 1024) + (width * height * 8) + ((1024 + width * height * 1.5) * 3 * frameCount)`
+    `(2 * 1024 * 1024) + (128 * 1024) + (width * height * 8) + ((2048 + width * height * 1.5) * 2 * frameCount)`
     The peak heap memory usage in bytes, if using a general-purpose heap allocator, is bounded by the following formula:
-    `(2 * 1024 * 1024) + (width * height * 9.5) + 1024 + (16 * frameCount) + (2 * sizeOfResultingGif)
+    `(2 * 1024 * 1024) + (128 * 1024) + (width * height * 11) + 2048 + (16 * frameCount) + (2 * sizeOfResultingGif)
 
 
 See end of file for license information.
 */
 
-//version 2.3
+//version 2.4
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// HEADER                                                                                                           ///
@@ -130,7 +130,9 @@ int msf_gif_begin(MsfGifState * handle, int width, int height);
  *                             Lowering this value can result in smaller gifs and slightly faster exports,
  *                             but the resulting gifs may look noticeably worse with a more extreme dither pattern.
  * @param pitchInBytes         The number of bytes from the beginning of one row of pixels to the beginning of the next.
- *                             If you want to flip the image, just pass in a negative pitch.
+ *                             If zero, the rows will be assumed to be contiguous (equivalent to `width * 4`).
+ *                             If negative, the rows will be reversed, thus flipping the image vertically.
+ *                             Regardless, `pixelData` should always point to the *first* row in memory, not the last.
  * @return                     Non-zero on success, 0 on error.
  */
 int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFrame, int quality, int pitchInBytes);
@@ -395,12 +397,15 @@ static inline void msf_lzw_reset(MsfStridedList * lzw, int tableSize, int stride
     lzw->stride = stride;
 }
 
+//PERF TODO: is it possible to use the same array for both `used` and `tlb`?
 static MsfGifBuffer * msf_compress_frame(void * allocContext, int width, int height, int centiSeconds,
                                          MsfCookedFrame frame, MsfGifState * handle, uint8_t * used, uint8_t * tlb, int16_t * lzwMem)
 { MsfTimeFunc
-    //NOTE: we reserve enough memory for theoretical the worst case upfront because it's a reasonable amount,
-    //      and prevents us from ever having to check size or realloc during compression
-    int maxBufSize = offsetof(MsfGifBuffer, data) + 32 + 256 * 3 + width * height * 3 / 2; //headers + color table + data
+    //NOTE: We reserve enough memory for the theoretical worst case upfront because it's a reasonable amount,
+    //      and prevents us from ever having to check size or realloc during compression.
+    //NOTE: headers + color table + 12 bits per pixel (since 12 bits is the maximum code size)
+    //      + space for at least one full Image Data block (needed for small images since we zero a whole block at a time)
+    int maxBufSize = offsetof(MsfGifBuffer, data) + 32 + 256 * 3 + width * height * 3 / 2 + (256 + 4);
     MsfGifBuffer * buffer = (MsfGifBuffer *) MSF_GIF_MALLOC(allocContext, maxBufSize);
     if (!buffer) { return NULL; }
     uint8_t * writeHead = buffer->data;
@@ -451,6 +456,7 @@ static MsfGifBuffer * msf_compress_frame(void * allocContext, int width, int hei
     int hasSamePal = frame.rbits == previous.rbits && frame.gbits == previous.gbits && frame.bbits == previous.bbits;
     int framesCompatible = hasSamePal && !hasTransparentPixels;
 
+    //write the Graphics `Control Extension` and `Image Descriptor` blocks
     //NOTE: because __attribute__((__packed__)) is annoyingly compiler-specific, we do this unreadable weirdness
     char headerBytes[19] = "\x21\xF9\x04\x05\0\0\0\0" "\x2C\0\0\0\0\0\0\0\0\x80";
     //NOTE: we need to check the frame number because if we reach into the buffer prior to the first frame,
@@ -465,13 +471,13 @@ static MsfGifBuffer * msf_compress_frame(void * allocContext, int width, int hei
     memcpy(writeHead, headerBytes, 18);
     writeHead += 18;
 
-    //local color table
+    //write Local Color Table
     memcpy(writeHead, table, tableSize * sizeof(Color3));
     writeHead += tableSize * sizeof(Color3);
     *writeHead++ = tableBits;
 
-    //prep block
-    memset(writeHead, 0, 260);
+    //prep first Image Data block (analogous to what we do at the end of msf_put_code())
+    memset(writeHead, 0, 256 + 4); //we write up to 4 bytes ahead of the end of the block - see msf_put_code()
     writeHead[0] = 255;
     uint32_t blockBits = 8; //relative to block.head
 
@@ -552,6 +558,14 @@ static void msf_free_gif_state(MsfGifState * handle) {
 }
 
 int msf_gif_begin(MsfGifState * handle, int width, int height) { MsfTimeFunc
+    //To help avoid potential overflow errors, let's just not even try to support images larger than 1GB in size.
+    //And let's also reject images with width or height more or less than what the gif format itself supports.
+    const int MAX_PIXELS = 268'435'456; //2^30 / 4 = 1GB / bytesPerPixel
+    if (width < 1 || height < 1 || width > 65535 || height > 65535 || width >= MAX_PIXELS / height) {
+        handle->listHead = NULL; //this implicitly marks the handle as invalid until the next msf_gif_begin() call
+        return 0;
+    }
+
     //NOTE: we cannot stomp the entire struct to zero because we must preserve `customAllocatorContext`.
     MsfCookedFrame empty = {0}; //god I hate MSVC...
     handle->previousFrame = empty;
@@ -562,7 +576,7 @@ int msf_gif_begin(MsfGifState * handle, int width, int height) { MsfTimeFunc
 
     //NOTE: Default stack sizes for some platforms are very small. Emscripten in particular uses a 64k stack by default.
     //      So anything that large or larger must be allocated on the heap, even if its maximum size is compile-time known.
-    //      The lzw, tlb, and used arrays are 2MB, 64KB, and 64KB respectively, so we allocate them here.
+    //      The `lzw`, `tlb`, and `used` arrays are 2MB, 64KB, and 64KB respectively, so we allocate them here.
     //      We could make them arrays at global scope, but that would create problems if the library is used from multiple threads.
     handle->lzwMem = (int16_t *) MSF_GIF_MALLOC(handle->customAllocatorContext, lzwAllocSize);
     handle->tlbMem = (uint8_t *) MSF_GIF_MALLOC(handle->customAllocatorContext, tlbAllocSize);
@@ -593,6 +607,7 @@ int msf_gif_begin(MsfGifState * handle, int width, int height) { MsfTimeFunc
 int msf_gif_frame(MsfGifState * handle, uint8_t * pixelData, int centiSecondsPerFrame, int quality, int pitchInBytes)
 { MsfTimeFunc
     if (!handle->listHead) { return 0; }
+    //TODO: sanity-check `pitchInBytes`
 
     quality = msf_imax(1, msf_imin(16, quality));
     if (pitchInBytes == 0) pitchInBytes = handle->width * 4;
